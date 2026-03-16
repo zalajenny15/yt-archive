@@ -1,44 +1,50 @@
 name: youtube-archive
 
 on:
+  workflow_dispatch:
   schedule:
     - cron: "0 * * * *"
-  workflow_dispatch:
 
 jobs:
   archive:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Descargar repositorio
-      uses: actions/checkout@v4
 
-    - name: Instalar Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.x"
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Instalar yt-dlp
-      run: |
-        python -m pip install --upgrade pip
-        pip install yt-dlp
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
-    - name: Instalar ffmpeg
-      run: |
-        sudo apt update
-        sudo apt install ffmpeg -y
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
 
-    - name: Crear carpeta
-      run: mkdir downloads
+      - name: Install yt-dlp
+        run: |
+          python -m pip install --upgrade pip
+          pip install yt-dlp
 
-    - name: Descargar videos
-      run: |
-        yt-dlp \
-        --cookies cookies.txt \
-        --ignore-errors \
-        --download-archive archive.txt \
-        --batch-file canales.txt \
-        --concurrent-fragments 8 \
-        -f "bv*[height<=1080]+ba/b[height<=1080]" \
-        --merge-output-format mp4 \
-        -o "downloads/%(title)s-%(id)s.%(ext)s"
+      - name: Install ffmpeg
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg
+
+      - name: Create download folder
+        run: mkdir downloads
+
+      - name: Download videos
+        run: |
+          yt-dlp \
+          --js-runtimes node \
+          --cookies cookies.txt \
+          --ignore-errors \
+          --download-archive archive.txt \
+          --batch-file canales.txt \
+          -f "bv*[height<=1080]+ba/b[height<=1080]" \
+          --merge-output-format mp4 \
+          -o "downloads/%(uploader)s/%(upload_date)s-%(title)s-%(id)s.%(ext)s"
