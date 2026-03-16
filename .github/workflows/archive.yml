@@ -34,12 +34,11 @@ jobs:
     - name: Descargar videos
       run: |
         yt-dlp \
+        --cookies cookies.txt \
         --ignore-errors \
         --download-archive archive.txt \
         --batch-file canales.txt \
         --concurrent-fragments 8 \
-        --retries 10 \
-        --fragment-retries 10 \
         -f "bv*[height<=1080]+ba/b[height<=1080]" \
         --merge-output-format mp4 \
-        -o "downloads/%(upload_date)s-%(title)s-%(id)s.%(ext)s"
+        -o "downloads/%(title)s-%(id)s.%(ext)s"
