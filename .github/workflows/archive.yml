@@ -1,51 +1,61 @@
-name: youtube-archive
+name: YouTube Archive
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"
+    - cron: "*/30 * * * *"  # cada 30 minutos
+
+concurrency:
+  group: youtube-archive
+  cancel-in-progress: false
 
 jobs:
-  archive:
+  download-and-upload:
     runs-on: ubuntu-latest
 
     steps:
-
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Install Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.11"
 
-      - name: Install yt-dlp
+      - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install yt-dlp
+          pip install -U yt-dlp
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
 
-      - name: Install ffmpeg
+      - name: Install rclone
         run: |
-          sudo apt update
-          sudo apt install -y ffmpeg
+          curl https://rclone.org/install.sh | sudo bash
 
-      - name: Create download folder
-        run: mkdir downloads
+      - name: Setup rclone config
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
 
       - name: Download videos
         run: |
           yt-dlp \
-          --js-runtimes node \
-          --remote-components ejs:github \
-          --cookies cookies.txt \
-          --ignore-errors \
+          --cookies-from-browser chrome \
           --download-archive archive.txt \
-          --batch-file canales.txt \
-          -f "bv*[height<=1080]+ba/b[height<=1080]" \
-          --merge-output-format mp4 \
-          -o "downloads/%(uploader)s/%(upload_date)s-%(title)s-%(id)s.%(ext)s"
+          --concurrent-fragments 5 \
+          --retries 10 \
+          --fragment-retries 10 \
+          --no-overwrites \
+          -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          -o "%(uploader)s/%(upload_date>%Y-%m-%d)s/%(title)s.%(ext)s" \
+          -a canales.txt
+
+      - name: Upload to Google Drive
+        run: |
+          rclone copy . gdrive:YouTubeArchive \
+          --create-empty-src-dirs \
+          --transfers 4 \
+          --checkers 8 \
+          --fast-list \
+          --drive-chunk-size 64M \
+          --progress
