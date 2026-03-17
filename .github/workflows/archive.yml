@@ -17,7 +17,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # 🔥 IMPORTANTE: necesario para resolver el challenge JS de YouTube
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -32,7 +31,7 @@ jobs:
         run: |
           pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
           sudo apt-get update
-          sudo apt-get install -y ffmpeg jq
+          sudo apt-get install -y ffmpeg
 
       - name: Install rclone
         run: |
@@ -43,18 +42,18 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
+      # 🔐 ESCRIBIR COOKIES
       - name: Write cookies
         run: |
           echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
+      # 🔥 BAJAR HISTORIAL
       - name: Download archive
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
-      # =========================
-      # DOWNLOAD (ANTI-BLOCK)
-      # =========================
-      - name: Download videos
+      # ⚡ PASO 1 — RSS (detección rápida)
+      - name: Download from RSS
         run: |
           yt-dlp \
           --cookies cookies.txt \
@@ -67,56 +66,40 @@ jobs:
           --no-abort-on-error \
           --retries 10 \
           --fragment-retries 10 \
+          --download-archive archive.txt \
+          --no-overwrites \
+          --merge-output-format mp4 \
+          --embed-thumbnail \
+          --add-metadata \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+          -a feeds.txt
+
+      # 🧠 PASO 2 — CANALES (respaldo)
+      - name: Download from channels
+        run: |
+          yt-dlp \
+          --cookies cookies.txt \
+          --js-runtimes node \
+          --remote-components ejs:github \
+          --sleep-requests 3 \
+          --sleep-interval 10 \
+          --max-sleep-interval 30 \
+          --ignore-errors \
+          --no-abort-on-error \
+          --retries 10 \
+          --fragment-retries 10 \
           --concurrent-fragments 5 \
           --download-archive archive.txt \
           --no-overwrites \
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          --write-info-json \
-          --user-agent "Mozilla/5.0" \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
-          -a feeds.txt \
+          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a canales.txt
 
-      # =========================
-      # ORGANIZE (SHORTS / LIVE / VIDEOS)
-      # =========================
-      - name: Organize files
-        run: |
-          for file in */*.mp4; do
-            [ -e "$file" ] || continue
-
-            uploader=$(echo "$file" | cut -d'/' -f1)
-            base="${file%.mp4}"
-            json="$base.info.json"
-            filename=$(basename "$file")
-
-            folder="videos"
-
-            if [ -f "$json" ]; then
-              is_live=$(jq -r '.live_status // empty' "$json")
-              duration=$(jq -r '.duration // 0' "$json")
-
-              if [[ "$is_live" == "is_live" || "$is_live" == "was_live" ]]; then
-                folder="live"
-              elif [ "$duration" -le 90 ] && [ "$duration" -gt 0 ]; then
-                folder="shorts"
-              fi
-            fi
-
-            mkdir -p "$uploader/$folder"
-            mv "$file" "$uploader/$folder/$filename"
-
-            if [ -f "$json" ]; then
-              mv "$json" "$uploader/$folder/"
-            fi
-          done
-
-      # =========================
-      # UPLOAD TO GOOGLE DRIVE
-      # =========================
+      # ☁️ SUBIR VIDEOS
       - name: Upload videos
         run: |
           rclone move . gdrive:YouTubeArchive \
@@ -128,14 +111,14 @@ jobs:
           --exclude "archive.txt" \
           --transfers 4 \
           --checkers 8 \
-          --drive-chunk-size 64M \
-          --drive-upload-cutoff 64M \
           --progress
 
+      # 💾 GUARDAR HISTORIAL
       - name: Upload archive
         run: |
           rclone copy archive.txt gdrive:YouTubeArchive/
 
+      # 🧹 LIMPIEZA
       - name: Cleanup
         run: |
           rm -rf */*
