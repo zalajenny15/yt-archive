@@ -42,6 +42,12 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG_BASE64 }}" | base64 -d > ~/.config/rclone/rclone.conf
 
+      - name: Debug config content
+        run: |
+          echo "===== CONFIG ====="
+          cat ~/.config/rclone/rclone.conf || echo "NO FILE"
+          echo "=================="
+
       - name: Test rclone
         run: |
           rclone lsd gdrive:
