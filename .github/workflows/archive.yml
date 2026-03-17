@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID PRO
+name: YouTube Archive HYBRID PRO FIXED
 
 on:
   workflow_dispatch:
@@ -17,11 +17,6 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -31,7 +26,7 @@ jobs:
         run: |
           pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg jq
 
       - name: Install rclone
         run: |
@@ -51,39 +46,16 @@ jobs:
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
       # =========================
-      # DOWNLOAD FROM RSS
+      # DOWNLOAD (SIMPLE + STABLE)
       # =========================
-      - name: Download from RSS
+      - name: Download videos
         run: |
           yt-dlp \
           --cookies cookies.txt \
+          --extractor-args "youtube:player_client=android" \
           --sleep-requests 2 \
           --sleep-interval 5 \
           --max-sleep-interval 15 \
-          --ignore-errors \
-          --no-abort-on-error \
-          --retries 10 \
-          --fragment-retries 10 \
-          --download-archive archive.txt \
-          --no-overwrites \
-          --merge-output-format mp4 \
-          --embed-thumbnail \
-          --add-metadata \
-          --parse-metadata "live_status:live_status" \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status&live|%(is_short&shorts|videos)s)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
-          -a feeds.txt
-
-      # =========================
-      # DOWNLOAD FROM CHANNELS
-      # =========================
-      - name: Download from channels
-        run: |
-          yt-dlp \
-          --cookies cookies.txt \
-          --sleep-requests 3 \
-          --sleep-interval 10 \
-          --max-sleep-interval 30 \
           --ignore-errors \
           --no-abort-on-error \
           --retries 10 \
@@ -94,13 +66,49 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          --parse-metadata "live_status:live_status" \
+          --write-info-json \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status&live|%(is_short&shorts|videos)s)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -o "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -a feeds.txt \
           -a canales.txt
 
       # =========================
-      # UPLOAD TO DRIVE
+      # ORGANIZE (REAL LOGIC)
+      # =========================
+      - name: Organize files
+        run: |
+          for file in */*.mp4; do
+            [ -e "$file" ] || continue
+
+            uploader=$(echo "$file" | cut -d'/' -f1)
+            base="${file%.mp4}"
+            json="$base.info.json"
+            filename=$(basename "$file")
+
+            folder="videos"
+
+            if [ -f "$json" ]; then
+              is_live=$(jq -r '.live_status // empty' "$json")
+              duration=$(jq -r '.duration // 0' "$json")
+
+              if [[ "$is_live" == "is_live" || "$is_live" == "was_live" ]]; then
+                folder="live"
+              elif [ "$duration" -le 90 ] && [ "$duration" -gt 0 ]; then
+                folder="shorts"
+              fi
+            fi
+
+            mkdir -p "$uploader/$folder"
+            mv "$file" "$uploader/$folder/$filename"
+
+            # mover metadata también
+            if [ -f "$json" ]; then
+              mv "$json" "$uploader/$folder/"
+            fi
+          done
+
+      # =========================
+      # UPLOAD
       # =========================
       - name: Upload videos
         run: |
