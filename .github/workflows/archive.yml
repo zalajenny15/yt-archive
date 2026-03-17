@@ -1,9 +1,9 @@
-name: YouTube Archive
+name: YouTube Archive HYBRID
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "*/30 * * * *"  # cada 30 minutos
+    - cron: "*/10 * * * *"
 
 concurrency:
   group: youtube-archive
@@ -42,17 +42,33 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      - name: Debug config content
+      # 🔥 BAJAR HISTORIAL
+      - name: Download archive
         run: |
-          echo "===== CONFIG ====="
-          cat ~/.config/rclone/rclone.conf || echo "NO FILE"
-          echo "=================="
+          rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
-      - name: Test rclone
+      # ⚡ PASO 1 — RSS (ULTRA RÁPIDO)
+      - name: Download from RSS (fast detection)
         run: |
-          rclone lsd gdrive:
+          yt-dlp \
+          --js-runtimes node \
+          --remote-components ejs:github \
+          --sleep-requests 1 \
+          --ignore-errors \
+          --no-abort-on-error \
+          --extractor-args "youtube:player_client=android,web;formats=missing_pot" \
+          --download-archive archive.txt \
+          --no-overwrites \
+          --merge-output-format mp4 \
+          --embed-thumbnail \
+          --add-metadata \
+          -S "res,codec:avc:m4a" \
+          -f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]/best" \
+          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+          -a feeds.txt
 
-      - name: Download videos
+      # 🧠 PASO 2 — CANALES (RESPALDO)
+      - name: Download from channels (backup)
         run: |
           yt-dlp \
           --js-runtimes node \
@@ -61,8 +77,9 @@ jobs:
           --sleep-interval 5 \
           --max-sleep-interval 20 \
           --ignore-errors \
+          --no-abort-on-error \
           --cookies cookies.txt \
-          --extractor-args "youtube:player_client=web;formats=missing_pot" \
+          --extractor-args "youtube:player_client=android,web;formats=missing_pot" \
           --download-archive archive.txt \
           --concurrent-fragments 5 \
           --retries 10 \
@@ -71,18 +88,31 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" \
-          -o "%(uploader)s/%(upload_date>%Y-%m-%d)s/%(title)s.%(ext)s" \
+          -S "res,codec:avc:m4a" \
+          -f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]/best" \
+          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a canales.txt
 
-      - name: Upload to Google Drive
+      # ☁️ SUBIR VIDEOS
+      - name: Upload videos
         run: |
           rclone move . gdrive:YouTubeArchive \
           --exclude ".git/**" \
           --exclude ".github/**" \
           --exclude "cookies.txt" \
           --exclude "canales.txt" \
+          --exclude "feeds.txt" \
           --exclude "archive.txt" \
           --transfers 4 \
           --checkers 8 \
           --progress
+
+      # 💾 GUARDAR HISTORIAL
+      - name: Upload archive
+        run: |
+          rclone copy archive.txt gdrive:YouTubeArchive/
+
+      # 🧹 LIMPIEZA
+      - name: Cleanup
+        run: |
+          rm -rf */*
