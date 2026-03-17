@@ -20,7 +20,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -69,7 +69,7 @@ jobs:
           --embed-thumbnail \
           --add-metadata \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status:is_live|was_live:live|not_live:not_live|NA:not_live)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -o "%(uploader)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a feeds.txt
 
       - name: Download from channels
@@ -92,34 +92,21 @@ jobs:
           --embed-thumbnail \
           --add-metadata \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status:is_live|was_live:live|not_live:not_live|NA:not_live)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -o "%(uploader)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a canales.txt
 
-      - name: Fix misplaced files
+      - name: Move live videos to live folder
         run: |
-          for dir in */NA/*/*.mp4; do
-            [ -e "$dir" ] || continue
-            uploader=$(echo "$dir" | cut -d'/' -f1)
-            filename=$(basename "$dir")
-
-            live_status=$(ffprobe -v error -show_entries format_tags=live_status -of default=noprint_wrappers=1:nokey=1 "$dir" || echo "not_live")
-            duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$dir" || echo "0")
-
-            is_short=$(echo "$duration < 90" | bc)
-
+          for file in */videos/*.mp4; do
+            [ -e "$file" ] || continue
+            uploader=$(echo "$file" | cut -d'/' -f1)
+            filename=$(basename "$file")
+            live_status=$(ffprobe -v error -show_entries format_tags=live_status -of default=noprint_wrappers=1:nokey=1 "$file" || echo "not_live")
             if [[ "$live_status" == "is_live" || "$live_status" == "was_live" ]]; then
-              target="live"
-            else
-              if [ "$is_short" -eq 1 ]; then
-                target="shorts"
-              else
-                target="videos"
-              fi
+              mkdir -p "$uploader/live"
+              mv "$file" "$uploader/live/$filename"
+              echo "Moved $file to $uploader/live/$filename"
             fi
-
-            mkdir -p "$uploader/$target"
-            mv "$dir" "$uploader/$target/$filename"
-            echo "Moved $dir to $uploader/$target/$filename"
           done
 
       - name: Upload videos
