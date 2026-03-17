@@ -40,7 +40,7 @@ jobs:
       - name: Download videos
         run: |
           yt-dlp \
-          --cookies-from-browser chrome \
+          --cookies cookies.txt \
           --download-archive archive.txt \
           --concurrent-fragments 5 \
           --retries 10 \
@@ -52,10 +52,10 @@ jobs:
 
       - name: Upload to Google Drive
         run: |
-          rclone copy . gdrive:YouTubeArchive \
-          --create-empty-src-dirs \
-          --transfers 4 \
-          --checkers 8 \
-          --fast-list \
-          --drive-chunk-size 64M \
+          rclone move . gdrive:YouTubeArchive \
+          --exclude ".git/**" \
+          --exclude ".github/**" \
+          --exclude "cookies.txt" \
+          --exclude "canales.txt" \
+          --exclude "archive.txt" \
           --progress
