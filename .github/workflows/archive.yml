@@ -71,7 +71,7 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
           -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a feeds.txt
 
@@ -90,13 +90,12 @@ jobs:
           --retries 10 \
           --fragment-retries 10 \
           --concurrent-fragments 5 \
-          --extractor-args "youtube:player_client=android,web,ios;formats=missing_pot" \
           --download-archive archive.txt \
           --no-overwrites \
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
           -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a canales.txt
 
