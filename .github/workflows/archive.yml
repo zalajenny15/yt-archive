@@ -52,7 +52,6 @@ jobs:
         run: |
           yt-dlp \
           --cookies cookies.txt \
-          --extractor-args "youtube:player_client=android" \
           --sleep-requests 2 \
           --sleep-interval 5 \
           --max-sleep-interval 15 \
@@ -67,7 +66,7 @@ jobs:
           --embed-thumbnail \
           --add-metadata \
           --write-info-json \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
           -o "%(uploader)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a feeds.txt \
           -a canales.txt
