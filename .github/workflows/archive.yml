@@ -17,6 +17,11 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -41,12 +46,16 @@ jobs:
         run: |
           yt-dlp \
           --cookies cookies.txt \
+          --extractor-args "youtube:player_client=android,web" \
           --download-archive archive.txt \
           --concurrent-fragments 5 \
           --retries 10 \
           --fragment-retries 10 \
           --no-overwrites \
-          -f "bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          --merge-output-format mp4 \
+          --embed-thumbnail \
+          --add-metadata \
+          -f "bestvideo[vcodec^=avc1][height<=1080]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4][height<=1080]+bestaudio[ext=m4a]/bestvideo+bestaudio/best" \
           -o "%(uploader)s/%(upload_date>%Y-%m-%d)s/%(title)s.%(ext)s" \
           -a canales.txt
 
