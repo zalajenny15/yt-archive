@@ -72,7 +72,7 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]/best" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]" \
           -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a feeds.txt
 
@@ -97,7 +97,7 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo[vcodec^=avc1]/best" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]" \
           -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a canales.txt
 
