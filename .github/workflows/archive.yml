@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID
+name: YouTube Archive HYBRID PRO
 
 on:
   workflow_dispatch:
@@ -31,7 +31,7 @@ jobs:
         run: |
           pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
           sudo apt-get update
-          sudo apt-get install -y ffmpeg bc
+          sudo apt-get install -y ffmpeg
 
       - name: Install rclone
         run: |
@@ -50,12 +50,13 @@ jobs:
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
+      # =========================
+      # DOWNLOAD FROM RSS
+      # =========================
       - name: Download from RSS
         run: |
           yt-dlp \
           --cookies cookies.txt \
-          --js-runtimes node \
-          --remote-components ejs:github \
           --sleep-requests 2 \
           --sleep-interval 5 \
           --max-sleep-interval 15 \
@@ -68,16 +69,18 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          --parse-metadata "live_status:live_status" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          -o "%(uploader)s/%(live_status&live|%(is_short&shorts|videos)s)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a feeds.txt
 
+      # =========================
+      # DOWNLOAD FROM CHANNELS
+      # =========================
       - name: Download from channels
         run: |
           yt-dlp \
           --cookies cookies.txt \
-          --js-runtimes node \
-          --remote-components ejs:github \
           --sleep-requests 3 \
           --sleep-interval 10 \
           --max-sleep-interval 30 \
@@ -91,24 +94,14 @@ jobs:
           --merge-output-format mp4 \
           --embed-thumbnail \
           --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          --parse-metadata "live_status:live_status" \
+          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/best[ext=mp4]" \
+          -o "%(uploader)s/%(live_status&live|%(is_short&shorts|videos)s)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a canales.txt
 
-      - name: Move live videos to live folder
-        run: |
-          for file in */videos/*.mp4; do
-            [ -e "$file" ] || continue
-            uploader=$(echo "$file" | cut -d'/' -f1)
-            filename=$(basename "$file")
-            live_status=$(ffprobe -v error -show_entries format_tags=live_status -of default=noprint_wrappers=1:nokey=1 "$file" || echo "not_live")
-            if [[ "$live_status" == "is_live" || "$live_status" == "was_live" ]]; then
-              mkdir -p "$uploader/live"
-              mv "$file" "$uploader/live/$filename"
-              echo "Moved $file to $uploader/live/$filename"
-            fi
-          done
-
+      # =========================
+      # UPLOAD TO DRIVE
+      # =========================
       - name: Upload videos
         run: |
           rclone move . gdrive:YouTubeArchive \
@@ -120,6 +113,8 @@ jobs:
           --exclude "archive.txt" \
           --transfers 4 \
           --checkers 8 \
+          --drive-chunk-size 64M \
+          --drive-upload-cutoff 64M \
           --progress
 
       - name: Upload archive
