@@ -42,21 +42,31 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
+      # 🔐 ESCRIBIR COOKIES
+      - name: Write cookies
+        run: |
+          echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+
       # 🔥 BAJAR HISTORIAL
       - name: Download archive
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
-      # ⚡ PASO 1 — RSS (ULTRA RÁPIDO)
-      - name: Download from RSS (fast detection)
+      # ⚡ PASO 1 — RSS (detección rápida)
+      - name: Download from RSS
         run: |
           yt-dlp \
+          --cookies cookies.txt \
           --js-runtimes node \
           --remote-components ejs:github \
-          --sleep-requests 1 \
+          --sleep-requests 2 \
+          --sleep-interval 5 \
+          --max-sleep-interval 15 \
           --ignore-errors \
           --no-abort-on-error \
-          --extractor-args "youtube:player_client=android,web;formats=missing_pot" \
+          --retries 10 \
+          --fragment-retries 10 \
+          --extractor-args "youtube:player_client=android,web,ios;formats=missing_pot" \
           --download-archive archive.txt \
           --no-overwrites \
           --merge-output-format mp4 \
@@ -67,23 +77,23 @@ jobs:
           -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
           -a feeds.txt
 
-      # 🧠 PASO 2 — CANALES (RESPALDO)
-      - name: Download from channels (backup)
+      # 🧠 PASO 2 — CANALES (respaldo)
+      - name: Download from channels
         run: |
           yt-dlp \
+          --cookies cookies.txt \
           --js-runtimes node \
           --remote-components ejs:github \
-          --sleep-requests 2 \
-          --sleep-interval 5 \
-          --max-sleep-interval 20 \
+          --sleep-requests 3 \
+          --sleep-interval 10 \
+          --max-sleep-interval 30 \
           --ignore-errors \
           --no-abort-on-error \
-          --cookies cookies.txt \
-          --extractor-args "youtube:player_client=android,web;formats=missing_pot" \
-          --download-archive archive.txt \
-          --concurrent-fragments 5 \
           --retries 10 \
           --fragment-retries 10 \
+          --concurrent-fragments 5 \
+          --extractor-args "youtube:player_client=android,web,ios;formats=missing_pot" \
+          --download-archive archive.txt \
           --no-overwrites \
           --merge-output-format mp4 \
           --embed-thumbnail \
