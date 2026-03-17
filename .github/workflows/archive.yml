@@ -72,7 +72,7 @@ jobs:
           --embed-thumbnail \
           --add-metadata \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status,live,not_live)s/%(duration<90,shorts,videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -o "%(uploader)s/%(live_status:is_live|was_live:live|not_live:not_live)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a feeds.txt
 
       # 🧠 PASO 2 — CANALES (respaldo)
@@ -96,7 +96,7 @@ jobs:
           --embed-thumbnail \
           --add-metadata \
           -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(live_status,live,not_live)s/%(duration<90,shorts,videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
+          -o "%(uploader)s/%(live_status:is_live|was_live:live|not_live:not_live)s/%(duration<90:shorts:videos)s/%(upload_date>%Y-%m-%d)s - %(title).200s.%(ext)s" \
           -a canales.txt
 
       # ☁️ SUBIR VIDEOS
