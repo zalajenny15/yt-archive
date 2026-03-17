@@ -31,7 +31,7 @@ jobs:
         run: |
           pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg bc
 
       - name: Install rclone
         run: |
@@ -97,19 +97,20 @@ jobs:
 
       - name: Fix misplaced files
         run: |
-          # Mover archivos que quedaron en carpetas con nombre NA o inesperado
           for dir in */NA/*/*.mp4; do
             [ -e "$dir" ] || continue
             uploader=$(echo "$dir" | cut -d'/' -f1)
             filename=$(basename "$dir")
-            # Leer metadata live_status usando ffprobe
+
             live_status=$(ffprobe -v error -show_entries format_tags=live_status -of default=noprint_wrappers=1:nokey=1 "$dir" || echo "not_live")
-            duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$dir" | cut -d'.' -f1 || echo "0")
+            duration=$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "$dir" || echo "0")
+
+            is_short=$(echo "$duration < 90" | bc)
 
             if [[ "$live_status" == "is_live" || "$live_status" == "was_live" ]]; then
               target="live"
             else
-              if (( duration < 90 )); then
+              if [ "$is_short" -eq 1 ]; then
                 target="shorts"
               else
                 target="videos"
