@@ -40,7 +40,7 @@ jobs:
       - name: Setup rclone config
         run: |
           mkdir -p ~/.config/rclone
-          echo "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
+          printf "%s" "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
 
       - name: Download videos
         run: |
@@ -50,6 +50,7 @@ jobs:
           --sleep-requests 2 \
           --sleep-interval 5 \
           --max-sleep-interval 20 \
+          --ignore-errors \
           --cookies cookies.txt \
           --extractor-args "youtube:player_client=web;formats=missing_pot" \
           --download-archive archive.txt \
@@ -72,4 +73,6 @@ jobs:
           --exclude "cookies.txt" \
           --exclude "canales.txt" \
           --exclude "archive.txt" \
+          --transfers 4 \
+          --checkers 8 \
           --progress
