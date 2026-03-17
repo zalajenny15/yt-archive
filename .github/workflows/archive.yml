@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID PRO FIXED
+name: YouTube Archive HYBRID
 
 on:
   workflow_dispatch:
