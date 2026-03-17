@@ -45,8 +45,9 @@ jobs:
       - name: Download videos
         run: |
           yt-dlp \
+          --js-runtimes node \
           --cookies cookies.txt \
-          --extractor-args "youtube:player_client=android,web" \
+          --extractor-args "youtube:player_client=web;formats=missing_pot" \
           --download-archive archive.txt \
           --concurrent-fragments 5 \
           --retries 10 \
