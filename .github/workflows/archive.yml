@@ -24,9 +24,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
-          pip install -U yt-dlp
+          pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
@@ -38,8 +38,10 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      - name: Cookies
-        run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+      # 🔐 ESCRIBIR COOKIES
+      - name: Write cookies
+        run: |
+          echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
       # 📥 HISTORIAL
       - name: Download archive
@@ -52,9 +54,9 @@ jobs:
           if [ -s feeds.txt ]; then
             yt-dlp \
             --match-filter "live_status!=is_upcoming" \
-            --playlist-end 5 \
-            --js-runtimes node \
             --cookies cookies.txt \
+            --js-runtimes node \
+            --playlist-end 5 \
             --ignore-errors \
             --no-abort-on-error \
             --download-archive archive.txt \
@@ -77,9 +79,9 @@ jobs:
         run: |
           if [ -s uploads.txt ]; then
             yt-dlp \
-            --playlist-end 5 \
-            --js-runtimes node \
             --cookies cookies.txt \
+            --js-runtimes node \
+            --playlist-end 5 \
             --ignore-errors \
             --no-abort-on-error \
             --download-archive archive.txt \
