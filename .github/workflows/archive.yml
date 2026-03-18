@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID ANTI-BAN
+name: YouTube Archive HYBRID
 
 on:
   workflow_dispatch:
