@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID CLEAN
+name: YouTube Archive HYBRID ANTI-BAN
 
 on:
   workflow_dispatch:
@@ -14,13 +14,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
@@ -31,14 +34,15 @@ jobs:
           sudo apt-get install -y ffmpeg
 
       - name: Install rclone
-        run: curl https://rclone.org/install.sh | sudo bash
+        run: |
+          curl https://rclone.org/install.sh | sudo bash
 
-      - name: Setup rclone
+      - name: Setup rclone config
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      # 🔐 ESCRIBIR COOKIES
+      # 🔐 COOKIES
       - name: Write cookies
         run: |
           echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
@@ -48,68 +52,94 @@ jobs:
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || true
 
-      # ⚡ RSS (rápido, incluye streams guardados)
-      - name: Download RSS
+      # ⚡ RSS (ANTI-BAN)
+      - name: Download from RSS
         run: |
           if [ -s feeds.txt ]; then
             yt-dlp \
-            --match-filter "live_status!=is_upcoming" \
             --cookies cookies.txt \
             --js-runtimes node \
-            --playlist-end 5 \
+            --extractor-args "youtube:player_client=android,web_safari" \
+            --remote-components ejs:github \
+            --sleep-requests 3 \
+            --sleep-interval 5 \
+            --max-sleep-interval 20 \
             --ignore-errors \
             --no-abort-on-error \
+            --retries 15 \
+            --fragment-retries 15 \
+            --extractor-retries 5 \
+            --retry-sleep 5 \
             --download-archive archive.txt \
             --no-overwrites \
             --merge-output-format mp4 \
             --embed-thumbnail \
             --add-metadata \
-            --sleep-requests 2 \
-            --sleep-interval 3 \
-            --max-sleep-interval 10 \
-            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            --concurrent-fragments 3 \
+            --force-ipv4 \
+            --http-chunk-size 10M \
+            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
             -a feeds.txt || true
           else
             echo "feeds.txt vacío"
           fi
 
-      # 🧠 BACKUP (uploads directos → rápido)
-      - name: Download uploads
+      # 🧠 CANALES (ANTI-BAN + BACKUP)
+      - name: Download from channels
         run: |
-          if [ -s uploads.txt ]; then
+          if [ -s canales.txt ]; then
             yt-dlp \
             --cookies cookies.txt \
             --js-runtimes node \
-            --playlist-end 5 \
+            --extractor-args "youtube:player_client=android,web_safari" \
+            --remote-components ejs:github \
+            --sleep-requests 5 \
+            --sleep-interval 10 \
+            --max-sleep-interval 30 \
             --ignore-errors \
             --no-abort-on-error \
+            --retries 15 \
+            --fragment-retries 15 \
+            --extractor-retries 5 \
+            --retry-sleep 10 \
+            --concurrent-fragments 3 \
             --download-archive archive.txt \
             --no-overwrites \
             --merge-output-format mp4 \
             --embed-thumbnail \
             --add-metadata \
-            --sleep-requests 2 \
-            --sleep-interval 5 \
-            --max-sleep-interval 15 \
+            --force-ipv4 \
+            --http-chunk-size 10M \
             -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-            -a uploads.txt || true
+            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            -a canales.txt || true
           else
-            echo "uploads.txt vacío"
+            echo "canales.txt vacío"
           fi
 
-      # ☁️ SUBIDA SEGURA
-      - name: Upload
+      # ☁️ SUBIDA (SEGURA)
+      - name: Upload videos
         run: |
-          [ -d videos ] && rclone move videos gdrive:YouTubeArchive/videos --create-empty-src-dirs || true
+          rclone move . gdrive:YouTubeArchive \
+          --exclude ".git/**" \
+          --exclude ".github/**" \
+          --exclude "cookies.txt" \
+          --exclude "canales.txt" \
+          --exclude "feeds.txt" \
+          --exclude "archive.txt" \
+          --transfers 3 \
+          --checkers 6 \
+          --tpslimit 4 \
+          --drive-chunk-size 64M \
+          --progress || true
 
       # 💾 GUARDAR HISTORIAL
-      - name: Save archive
+      - name: Upload archive
         run: |
           rclone copy archive.txt gdrive:YouTubeArchive/ || true
 
       # 🧹 LIMPIEZA
       - name: Cleanup
         run: |
-          rm -rf videos
+          rm -rf */*
