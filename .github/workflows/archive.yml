@@ -51,32 +51,7 @@ jobs:
       - name: Download archive
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
-
-      # ⚡ PASO 1 — RSS (detección rápida)
-      - name: Download from RSS
-        run: |
-          yt-dlp \
-          --match-filter "!is_live" \
-          --break-on-reject
-          --playlist-end 10
-          --cookies cookies.txt \
-          --js-runtimes node \
-          --remote-components ejs:github \
-          --sleep-requests 2 \
-          --sleep-interval 5 \
-          --max-sleep-interval 15 \
-          --ignore-errors \
-          --no-abort-on-error \
-          --retries 10 \
-          --fragment-retries 10 \
-          --download-archive archive.txt \
-          --no-overwrites \
-          --merge-output-format mp4 \
-          --embed-thumbnail \
-          --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-          -a feeds.txt
+      
 
       # 🧠 PASO 2 — CANALES (respaldo)
       - name: Download from channels
