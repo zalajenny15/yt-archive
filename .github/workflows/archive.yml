@@ -53,6 +53,7 @@ jobs:
             yt-dlp \
             --match-filter "live_status!=is_upcoming" \
             --playlist-end 5 \
+            --js-runtimes node \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
@@ -77,6 +78,7 @@ jobs:
           if [ -s uploads.txt ]; then
             yt-dlp \
             --playlist-end 5 \
+            --js-runtimes node \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
