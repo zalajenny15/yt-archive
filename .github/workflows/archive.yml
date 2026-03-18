@@ -57,6 +57,9 @@ jobs:
         run: |
           yt-dlp \
           --match-filter "!is_live" \
+          --dateafter now-1hour
+          --break-on-reject
+          --playlist-end 10
           --cookies cookies.txt \
           --js-runtimes node \
           --remote-components ejs:github \
