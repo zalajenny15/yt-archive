@@ -1,4 +1,4 @@
-name: YouTube Archive HYBRID
+name: YouTube Archive HYBRID CLEAN
 
 on:
   workflow_dispatch:
@@ -14,140 +14,98 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
+          pip install -U yt-dlp
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
       - name: Install rclone
-        run: |
-          curl https://rclone.org/install.sh | sudo bash
+        run: curl https://rclone.org/install.sh | sudo bash
 
-      - name: Setup rclone config
+      - name: Setup rclone
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      # 🔐 COOKIES
-      - name: Write cookies
-        run: |
-          echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+      - name: Cookies
+        run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
-      # 🔥 HISTORIAL
+      # 📥 HISTORIAL
       - name: Download archive
         run: |
-          rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
+          rclone copy gdrive:YouTubeArchive/archive.txt . || true
 
-      # 🔴 CAPTURA DE LIVES (NUEVO)
-      - name: Capture LIVE streams
+      # ⚡ RSS (rápido, incluye streams guardados)
+      - name: Download RSS
         run: |
-          if [ ! -s canales.txt ]; then
-            echo "canales.txt vacío o no existe"
-          else
-            yt-dlp \
-            --cookies cookies.txt \
-            --match-filter "is_live" \
-            --live-from-start \
-            --ignore-errors \
-            --no-abort-on-error \
-            --retries 10 \
-            --fragment-retries 10 \
-            --concurrent-fragments 3 \
-            --hls-use-mpegts \
-            --sleep-requests 2 \
-            --sleep-interval 5 \
-            --max-sleep-interval 15 \
-            -o "lives/%(uploader)s/%(title).200s.%(ext)s" \
-            -a canales.txt || true
-          fi
-
-      # ⚡ RSS (AHORA PERMITE LIVES TERMINADOS)
-      - name: Download from RSS
-        run: |
-          if [ ! -s feeds.txt ]; then
-            echo "feeds.txt vacío o no existe"
-          else
+          if [ -s feeds.txt ]; then
             yt-dlp \
             --match-filter "live_status!=is_upcoming" \
+            --playlist-end 5 \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
-            --skip-unavailable-fragments \
-            --extractor-retries 5 \
-            --retries 10 \
-            --fragment-retries 10 \
-            --sleep-requests 3 \
-            --sleep-interval 5 \
-            --max-sleep-interval 20 \
-            --force-ipv4 \
-            --http-chunk-size 10M \
             --download-archive archive.txt \
             --no-overwrites \
             --merge-output-format mp4 \
             --embed-thumbnail \
             --add-metadata \
+            --sleep-requests 2 \
+            --sleep-interval 3 \
+            --max-sleep-interval 10 \
             -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
             -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
             -a feeds.txt || true
+          else
+            echo "feeds.txt vacío"
           fi
 
-      # 🧠 CANALES (RESPALDO + VIDEOS FINALES)
-      - name: Download from channels
+      # 🧠 BACKUP (uploads directos → rápido)
+      - name: Download uploads
         run: |
-          if [ ! -s canales.txt ]; then
-            echo "canales.txt vacío o no existe"
-          else
+          if [ -s uploads.txt ]; then
             yt-dlp \
-            --match-filter "live_status!=is_upcoming" \
+            --playlist-end 5 \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
-            --skip-unavailable-fragments \
-            --extractor-retries 5 \
-            --retries 10 \
-            --fragment-retries 10 \
-            --concurrent-fragments 5 \
-            --sleep-requests 3 \
-            --sleep-interval 10 \
-            --max-sleep-interval 30 \
-            --force-ipv4 \
-            --http-chunk-size 10M \
             --download-archive archive.txt \
             --no-overwrites \
             --merge-output-format mp4 \
             --embed-thumbnail \
             --add-metadata \
+            --sleep-requests 2 \
+            --sleep-interval 5 \
+            --max-sleep-interval 15 \
             -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
             -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-            -a canales.txt || true
+            -a uploads.txt || true
+          else
+            echo "uploads.txt vacío"
           fi
 
-      # ☁️ SUBIR TODO (SEPARADO)
-      - name: Upload videos
+      # ☁️ SUBIDA SEGURA
+      - name: Upload
         run: |
-          rclone move videos gdrive:YouTubeArchive/videos --create-empty-src-dirs || true
-          rclone move lives gdrive:YouTubeArchive/lives --create-empty-src-dirs || true
+          [ -d videos ] && rclone move videos gdrive:YouTubeArchive/videos --create-empty-src-dirs || true
 
       # 💾 GUARDAR HISTORIAL
-      - name: Upload archive
+      - name: Save archive
         run: |
           rclone copy archive.txt gdrive:YouTubeArchive/ || true
 
       # 🧹 LIMPIEZA
       - name: Cleanup
         run: |
-          rm -rf videos lives
+          rm -rf videos
