@@ -42,7 +42,7 @@ jobs:
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      # 🔐 ESCRIBIR COOKIES
+      # 🔐 COOKIES
       - name: Write cookies
         run: |
           echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
@@ -52,58 +52,66 @@ jobs:
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
-      # ⚡ PASO 1 — RSS (detección rápida)
+      # ⚡ RSS (ULTRA ROBUSTO)
       - name: Download from RSS
         run: |
-          yt-dlp \
-          --match-filter "!is_live" \
-          --cookies cookies.txt \
-          --js-runtimes node \
-          --remote-components ejs:github \
-          --sleep-requests 2 \
-          --sleep-interval 5 \
-          --max-sleep-interval 15 \
-          --force-ipv4 \
-          --http-chunk-size 10M \
-          --ignore-errors \
-          --no-abort-on-error \
-          --retries 10 \
-          --fragment-retries 10 \
-          --download-archive archive.txt \
-          --no-overwrites \
-          --merge-output-format mp4 \
-          --embed-thumbnail \
-          --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-          -a feeds.txt
+          if [ ! -s feeds.txt ]; then
+            echo "feeds.txt vacío o no existe"
+          else
+            yt-dlp \
+            --match-filter "!is_live" \
+            --cookies cookies.txt \
+            --ignore-errors \
+            --no-abort-on-error \
+            --skip-unavailable-fragments \
+            --extractor-retries 5 \
+            --retries 10 \
+            --fragment-retries 10 \
+            --sleep-requests 3 \
+            --sleep-interval 5 \
+            --max-sleep-interval 20 \
+            --force-ipv4 \
+            --http-chunk-size 10M \
+            --download-archive archive.txt \
+            --no-overwrites \
+            --merge-output-format mp4 \
+            --embed-thumbnail \
+            --add-metadata \
+            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            -a feeds.txt || true
+          fi
 
-      # 🧠 PASO 2 — CANALES (respaldo)
+      # 🧠 CANALES (RESPALDO ROBUSTO)
       - name: Download from channels
         run: |
-          yt-dlp \
-          --match-filter "!is_live & live_status!=upcoming" \
-          --cookies cookies.txt \
-          --js-runtimes node \
-          --remote-components ejs:github \
-          --sleep-requests 3 \
-          --sleep-interval 10 \
-          --max-sleep-interval 30 \
-          --ignore-errors \
-          --no-abort-on-error \
-          --retries 10 \
-          --fragment-retries 10 \
-          --concurrent-fragments 5 \
-          --force-ipv4 \
-          --http-chunk-size 10M \
-          --download-archive archive.txt \
-          --no-overwrites \
-          --merge-output-format mp4 \
-          --embed-thumbnail \
-          --add-metadata \
-          -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-          -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-          -a canales.txt
+          if [ ! -s canales.txt ]; then
+            echo "canales.txt vacío o no existe"
+          else
+            yt-dlp \
+            --match-filter "!is_live & live_status!=upcoming" \
+            --cookies cookies.txt \
+            --ignore-errors \
+            --no-abort-on-error \
+            --skip-unavailable-fragments \
+            --extractor-retries 5 \
+            --retries 10 \
+            --fragment-retries 10 \
+            --concurrent-fragments 5 \
+            --sleep-requests 3 \
+            --sleep-interval 10 \
+            --max-sleep-interval 30 \
+            --force-ipv4 \
+            --http-chunk-size 10M \
+            --download-archive archive.txt \
+            --no-overwrites \
+            --merge-output-format mp4 \
+            --embed-thumbnail \
+            --add-metadata \
+            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            -a canales.txt || true
+          fi
 
       # ☁️ SUBIR VIDEOS
       - name: Upload videos
@@ -117,14 +125,14 @@ jobs:
           --exclude "archive.txt" \
           --transfers 4 \
           --checkers 8 \
-          --progress
+          --progress || true
 
       # 💾 GUARDAR HISTORIAL
       - name: Upload archive
         run: |
-          rclone copy archive.txt gdrive:YouTubeArchive/
+          rclone copy archive.txt gdrive:YouTubeArchive/ || true
 
-      # 🧹 LIMPIEZA
+      # 🧹 LIMPIEZA SEGURA
       - name: Cleanup
         run: |
-          rm -rf */*
+          find . -type f -name "*.mp4" -delete
