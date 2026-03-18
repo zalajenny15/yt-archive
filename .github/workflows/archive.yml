@@ -47,19 +47,42 @@ jobs:
         run: |
           echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
-      # 🔥 BAJAR HISTORIAL
+      # 🔥 HISTORIAL
       - name: Download archive
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || echo "no archive yet"
 
-      # ⚡ RSS (ULTRA ROBUSTO)
+      # 🔴 CAPTURA DE LIVES (NUEVO)
+      - name: Capture LIVE streams
+        run: |
+          if [ ! -s canales.txt ]; then
+            echo "canales.txt vacío o no existe"
+          else
+            yt-dlp \
+            --cookies cookies.txt \
+            --match-filter "is_live" \
+            --live-from-start \
+            --ignore-errors \
+            --no-abort-on-error \
+            --retries 10 \
+            --fragment-retries 10 \
+            --concurrent-fragments 3 \
+            --hls-use-mpegts \
+            --sleep-requests 2 \
+            --sleep-interval 5 \
+            --max-sleep-interval 15 \
+            -o "lives/%(uploader)s/%(title).200s.%(ext)s" \
+            -a canales.txt || true
+          fi
+
+      # ⚡ RSS (AHORA PERMITE LIVES TERMINADOS)
       - name: Download from RSS
         run: |
           if [ ! -s feeds.txt ]; then
             echo "feeds.txt vacío o no existe"
           else
             yt-dlp \
-            --match-filter "!is_live" \
+            --match-filter "live_status!=is_upcoming" \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
@@ -78,18 +101,18 @@ jobs:
             --embed-thumbnail \
             --add-metadata \
             -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
             -a feeds.txt || true
           fi
 
-      # 🧠 CANALES (RESPALDO ROBUSTO)
+      # 🧠 CANALES (RESPALDO + VIDEOS FINALES)
       - name: Download from channels
         run: |
           if [ ! -s canales.txt ]; then
             echo "canales.txt vacío o no existe"
           else
             yt-dlp \
-            --match-filter "!is_live & live_status!=upcoming" \
+            --match-filter "live_status!=is_upcoming" \
             --cookies cookies.txt \
             --ignore-errors \
             --no-abort-on-error \
@@ -109,30 +132,22 @@ jobs:
             --embed-thumbnail \
             --add-metadata \
             -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+            -o "videos/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
             -a canales.txt || true
           fi
 
-      # ☁️ SUBIR VIDEOS
+      # ☁️ SUBIR TODO (SEPARADO)
       - name: Upload videos
         run: |
-          rclone move . gdrive:YouTubeArchive \
-          --exclude ".git/**" \
-          --exclude ".github/**" \
-          --exclude "cookies.txt" \
-          --exclude "canales.txt" \
-          --exclude "feeds.txt" \
-          --exclude "archive.txt" \
-          --transfers 4 \
-          --checkers 8 \
-          --progress || true
+          rclone move videos gdrive:YouTubeArchive/videos --create-empty-src-dirs || true
+          rclone move lives gdrive:YouTubeArchive/lives --create-empty-src-dirs || true
 
       # 💾 GUARDAR HISTORIAL
       - name: Upload archive
         run: |
           rclone copy archive.txt gdrive:YouTubeArchive/ || true
 
-      # 🧹 LIMPIEZA SEGURA
+      # 🧹 LIMPIEZA
       - name: Cleanup
         run: |
-          find . -type f -name "*.mp4" -delete
+          rm -rf videos lives
