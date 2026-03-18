@@ -56,7 +56,7 @@ jobs:
       - name: Download from RSS
         run: |
           yt-dlp \
-          --match-filter "!is_live & !live_status=upcoming" \
+          --match-filter "!is_live" \
           --cookies cookies.txt \
           --js-runtimes node \
           --remote-components ejs:github \
@@ -80,7 +80,7 @@ jobs:
       - name: Download from channels
         run: |
           yt-dlp \
-          --match-filter "!is_live & !live_status=upcoming" \
+          --match-filter "!is_live & live_status!=upcoming" \
           --cookies cookies.txt \
           --js-runtimes node \
           --remote-components ejs:github \
