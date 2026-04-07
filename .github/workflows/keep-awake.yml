@@ -1,18 +1,22 @@
-name: Keep Supabase Awake
+name: Keep Websites Awake
 
-# Cada 25 minutos
 on:
   schedule:
-    - cron: '*/25 * * * *' 
-  workflow_dispatch: # Permite ejecutarlo manualmente también
+    - cron: '*/25 * * * *'  # cada 25 minutos
+  workflow_dispatch:
 
 jobs:
-  ping:
+  ping_sites:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Ping Vercel page
+      - name: Ping Verdad o Reto Gold
         run: |
-          echo "Haciendo ping a la página..."
+          echo "Haciendo ping a Verdad o Reto Gold..."
           curl -s https://verdad-o-reto-gold.vercel.app/ > /dev/null
+          echo "Ping completado ✅"
+
+      - name: Ping Advent Birthday
+        run: |
+          echo "Haciendo ping a Advent Birthday..."
+          curl -s https://advent-birthday.vercel.app/ > /dev/null
           echo "Ping completado ✅"
