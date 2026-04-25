@@ -46,7 +46,7 @@ jobs:
       # 🔐 COOKIES
       - name: Write cookies
         run: |
-          echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
+          echo "${{ secrets.YOUTUBE_COOKIES }}" | base64 --decode > cookies.txt
 
       # 📥 HISTORIAL
       - name: Download archive
