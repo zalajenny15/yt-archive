@@ -14,133 +14,196 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ========================
+      # 📦 REPO
+      # ========================
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ========================
+      # 🟢 NODE
+      # ========================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
+      # ========================
+      # 🐍 PYTHON
+      # ========================
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # ========================
+      # 🔧 DEPENDENCIES
+      # ========================
       - name: Install dependencies
         run: |
           pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
 
-      - name: Install rclone
-        run: |
           sudo apt-get update
-          sudo apt-get install -y rclone
+          sudo apt-get install -y ffmpeg rclone
 
+      # ========================
+      # ☁️ RCLONE CONFIG
+      # ========================
       - name: Setup rclone config
         run: |
           mkdir -p ~/.config/rclone
           echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
 
-      # 🔐 COOKIES
+      # ========================
+      # 🔐 COOKIES (opcionales)
+      # ========================
       - name: Write cookies
         run: |
-          echo "${{ secrets.YOUTUBE_COOKIES }}" | base64 --decode > cookies.txt
+          if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
+            echo "${{ secrets.YOUTUBE_COOKIES }}" | base64 --decode > cookies.txt
+            echo "cookies.txt creado"
+          else
+            echo "No hay cookies configuradas"
+          fi
 
-      # 📥 HISTORIAL
+      # ========================
+      # 📥 ARCHIVE BACKUP
+      # ========================
       - name: Download archive
         run: |
           rclone copy gdrive:YouTubeArchive/archive.txt . || true
 
-      # ⚡ RSS (ANTI-BAN)
-      - name: Download from RSS
+      # ========================
+      # 📁 FOLDER SEGURA
+      # ========================
+      - name: Create downloads folder
+        run: |
+          mkdir -p downloads
+
+      # =========================================================
+      # ⚡ RSS → SIN COOKIES
+      # =========================================================
+      - name: Download from RSS (public)
         run: |
           if [ -s feeds.txt ]; then
             yt-dlp \
-            --cookies cookies.txt \
-            --js-runtimes node \
-            --extractor-args "youtube:player_client=android,web_safari" \
-            --remote-components ejs:github \
-            --sleep-requests 3 \
-            --sleep-interval 5 \
-            --max-sleep-interval 20 \
-            --ignore-errors \
-            --no-abort-on-error \
-            --retries 15 \
-            --fragment-retries 15 \
-            --extractor-retries 5 \
-            --retry-sleep 5 \
-            --download-archive archive.txt \
-            --no-overwrites \
-            --merge-output-format mp4 \
-            --embed-thumbnail \
-            --add-metadata \
-            --concurrent-fragments 3 \
-            --force-ipv4 \
-            --http-chunk-size 10M \
-            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-            -a feeds.txt || true
+              --js-runtimes node \
+              --extractor-args "youtube:player_client=android,web_safari" \
+              --sleep-requests 3 \
+              --sleep-interval 5 \
+              --max-sleep-interval 20 \
+              --ignore-errors \
+              --no-abort-on-error \
+              --retries 15 \
+              --fragment-retries 15 \
+              --extractor-retries 5 \
+              --retry-sleep 5 \
+              --download-archive archive.txt \
+              --no-overwrites \
+              --merge-output-format mp4 \
+              --embed-thumbnail \
+              --add-metadata \
+              --concurrent-fragments 3 \
+              --force-ipv4 \
+              --http-chunk-size 10M \
+              -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+              -a feeds.txt || true
           else
             echo "feeds.txt vacío"
           fi
 
-      # 🧠 CANALES (ANTI-BAN + BACKUP)
-      - name: Download from channels
+      # =========================================================
+      # 🧠 CANALES → PRIMER INTENTO SIN COOKIES
+      # =========================================================
+      - name: Download from channels (without cookies)
         run: |
           if [ -s canales.txt ]; then
             yt-dlp \
-            --cookies cookies.txt \
-            --js-runtimes node \
-            --extractor-args "youtube:player_client=android,web_safari" \
-            --remote-components ejs:github \
-            --sleep-requests 5 \
-            --sleep-interval 10 \
-            --max-sleep-interval 30 \
-            --ignore-errors \
-            --no-abort-on-error \
-            --retries 15 \
-            --fragment-retries 15 \
-            --extractor-retries 5 \
-            --retry-sleep 10 \
-            --concurrent-fragments 3 \
-            --download-archive archive.txt \
-            --no-overwrites \
-            --merge-output-format mp4 \
-            --embed-thumbnail \
-            --add-metadata \
-            --force-ipv4 \
-            --http-chunk-size 10M \
-            -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-            -o "%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-            -a canales.txt || true
+              --js-runtimes node \
+              --extractor-args "youtube:player_client=android,web_safari" \
+              --sleep-requests 5 \
+              --sleep-interval 10 \
+              --max-sleep-interval 30 \
+              --ignore-errors \
+              --no-abort-on-error \
+              --retries 15 \
+              --fragment-retries 15 \
+              --extractor-retries 5 \
+              --retry-sleep 10 \
+              --concurrent-fragments 3 \
+              --download-archive archive.txt \
+              --no-overwrites \
+              --merge-output-format mp4 \
+              --embed-thumbnail \
+              --add-metadata \
+              --force-ipv4 \
+              --http-chunk-size 10M \
+              -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+              -a canales.txt || true
           else
             echo "canales.txt vacío"
           fi
 
-      # ☁️ SUBIDA (SEGURA)
+      # =========================================================
+      # 🔐 CANALES → SEGUNDO INTENTO CON COOKIES
+      # solo intentará lo que faltó gracias a archive.txt
+      # =========================================================
+      - name: Download from channels (with cookies fallback)
+        run: |
+          if [ -f cookies.txt ] && [ -s canales.txt ]; then
+            yt-dlp \
+              --cookies cookies.txt \
+              --js-runtimes node \
+              --extractor-args "youtube:player_client=android,web_safari" \
+              --sleep-requests 8 \
+              --sleep-interval 15 \
+              --max-sleep-interval 40 \
+              --ignore-errors \
+              --no-abort-on-error \
+              --retries 20 \
+              --fragment-retries 20 \
+              --extractor-retries 8 \
+              --retry-sleep 15 \
+              --concurrent-fragments 2 \
+              --download-archive archive.txt \
+              --no-overwrites \
+              --merge-output-format mp4 \
+              --embed-thumbnail \
+              --add-metadata \
+              --force-ipv4 \
+              --http-chunk-size 10M \
+              -f "bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
+              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
+              -a canales.txt || true
+          else
+            echo "Sin cookies o canales.txt vacío"
+          fi
+
+      # ========================
+      # ☁️ SUBIR VIDEOS
+      # ========================
       - name: Upload videos
         run: |
-          rclone move . gdrive:YouTubeArchive \
-          --exclude ".git/**" \
-          --exclude ".github/**" \
-          --exclude "cookies.txt" \
-          --exclude "canales.txt" \
-          --exclude "feeds.txt" \
-          --exclude "archive.txt" \
-          --transfers 3 \
-          --checkers 6 \
-          --tpslimit 4 \
-          --drive-chunk-size 64M \
-          --progress || true
+          rclone move downloads/ gdrive:YouTubeArchive \
+            --transfers 3 \
+            --checkers 6 \
+            --tpslimit 4 \
+            --drive-chunk-size 64M \
+            --progress || true
 
-      # 💾 GUARDAR HISTORIAL
+      # ========================
+      # 💾 GUARDAR ARCHIVE
+      # ========================
       - name: Upload archive
         run: |
           rclone copy archive.txt gdrive:YouTubeArchive/ || true
 
-      # 🧹 LIMPIEZA
+      # ========================
+      # 🧹 CLEANUP
+      # ========================
       - name: Cleanup
         run: |
-          rm -rf */*
+          rm -rf downloads
+          rm -f cookies.txt
