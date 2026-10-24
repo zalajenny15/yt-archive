@@ -1,3 +1,4 @@
+
 name: YouTube Archive HYBRID
 
 on:
@@ -9,19 +10,27 @@ concurrency:
   group: youtube-archive
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   download-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    env:
+      RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
+      YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
 
     steps:
       # ========================
-      # 📦 REPO
+      # REPOSITORIO
       # ========================
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       # ========================
-      # 🟢 NODE
+      # NODE.JS
       # ========================
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -29,7 +38,7 @@ jobs:
           node-version: "20"
 
       # ========================
-      # 🐍 PYTHON
+      # PYTHON
       # ========================
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -37,173 +46,326 @@ jobs:
           python-version: "3.11"
 
       # ========================
-      # 🔧 DEPENDENCIES
+      # DEPENDENCIAS
       # ========================
       - name: Install dependencies
+        shell: bash
         run: |
-          pip install -U "yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz"
+          set -euo pipefail
+
+          python -m pip install --upgrade yt-dlp
 
           sudo apt-get update
           sudo apt-get install -y ffmpeg rclone
 
-      # ========================
-      # ☁️ RCLONE CONFIG
-      # ========================
-      - name: Setup rclone config
-        run: |
-          mkdir -p ~/.config/rclone
-          echo "${{ secrets.RCLONE_CONFIG }}" | base64 --decode > ~/.config/rclone/rclone.conf
+          yt-dlp --version
+          rclone version
+          ffmpeg -version | head -n 1
+          node --version
 
       # ========================
-      # 🔐 COOKIES (opcionales)
+      # CONFIGURACION RCLONE
       # ========================
-      - name: Write cookies
+      - name: Setup rclone
+        shell: bash
         run: |
-          if [ -n "${{ secrets.YOUTUBE_COOKIES }}" ]; then
-            echo "${{ secrets.YOUTUBE_COOKIES }}" | base64 --decode > cookies.txt
-            echo "cookies.txt creado"
+          set -euo pipefail
+
+          if [[ -z "${RCLONE_CONFIG_B64:-}" ]]; then
+            echo "::error::Falta configurar el secreto RCLONE_CONFIG."
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.config/rclone"
+          chmod 700 "$HOME/.config/rclone"
+
+          printf '%s' "$RCLONE_CONFIG_B64" \
+            | base64 --decode \
+            > "$HOME/.config/rclone/rclone.conf"
+
+          chmod 600 "$HOME/.config/rclone/rclone.conf"
+
+          rclone listremotes
+
+      # ========================
+      # COOKIES OPCIONALES
+      # ========================
+      - name: Setup YouTube cookies
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${YOUTUBE_COOKIES_B64:-}" ]]; then
+            printf '%s' "$YOUTUBE_COOKIES_B64" \
+              | base64 --decode > cookies.txt
+
+            chmod 600 cookies.txt
+
+            if [[ ! -s cookies.txt ]]; then
+              echo "::error::El archivo de cookies está vacío."
+              exit 1
+            fi
+
+            echo "Cookies configuradas."
           else
-            echo "No hay cookies configuradas"
+            echo "No se configuraron cookies."
           fi
 
       # ========================
-      # 📥 ARCHIVE BACKUP
+      # PREPARAR HISTORIAL
       # ========================
-      - name: Download archive
+      - name: Restore and validate archive
+        id: archive
+        shell: bash
         run: |
-          rclone copy gdrive:YouTubeArchive/archive.txt . || true
+          set -euo pipefail
 
-      # ========================
-      # 📁 FOLDER SEGURA
-      # ========================
-      - name: Create downloads folder
-        run: |
+          REMOTE="gdrive:YouTubeArchive"
+          BACKUPS="$REMOTE/archive-backups"
+
+          # Crear las carpetas si no existen y comprobar
+          # que Google Drive sea accesible.
+          rclone mkdir "$BACKUPS"
+
+          REMOTE_FILES="$(rclone lsf "$REMOTE" --files-only)"
+
+          if printf '%s\n' "$REMOTE_FILES" | grep -Fxq "archive.txt"; then
+            echo "Restaurando historial remoto..."
+
+            rclone copyto \
+              "$REMOTE/archive.txt" \
+              archive.txt
+
+            if [[ ! -s archive.txt ]]; then
+              echo "::error::El historial remoto está vacío."
+              echo "::error::No se continuará para evitar perder el registro."
+              exit 1
+            fi
+
+            echo "archive_existed=true" >> "$GITHUB_OUTPUT"
+
+          else
+            # Solo inicializar si no hay historial ni copias
+            # anteriores creadas por este workflow.
+            BACKUP_FILES="$(rclone lsf "$BACKUPS" --files-only)"
+
+            if [[ -n "$BACKUP_FILES" ]]; then
+              echo "::error::No existe archive.txt, pero sí hay copias de seguridad."
+              echo "::error::Recupera una copia antes de continuar."
+              exit 1
+            fi
+
+            echo "::warning::No se encontró historial previo."
+            echo "Se inicializará archive.txt por primera vez."
+
+            : > archive.txt
+
+            echo "archive_existed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Guardar el historial anterior para poder restaurarlo.
+          cp archive.txt archive.before.txt
+
           mkdir -p downloads
 
-      # =========================================================
-      # ⚡ RSS → SIN COOKIES
-      # =========================================================
-      - name: Download from RSS (public)
+          echo "Historial preparado correctamente."
+
+      # ========================
+      # DESCARGAS
+      # ========================
+      - name: Download new videos
+        id: download
+        shell: bash
         run: |
-          if [ -s feeds.txt ]; then
-            yt-dlp \
-              --js-runtimes node \
-              --extractor-args "youtube:player_client=android,web_safari" \
+          set -uo pipefail
+
+          DOWNLOAD_ERRORS=0
+
+          # Preferir MP4 con AVC1 y audio M4A.
+          # Si no están disponibles, probar otros MP4 y,
+          # finalmente, el mejor formato compatible hasta 1080p.
+          FORMAT='bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/b[height<=1080]'
+
+          OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).180s [%(id)s].%(ext)s'
+
+          COMMON_ARGS=(
+            --js-runtimes node
+            --extractor-args "youtube:player_client=android,web_safari"
+            --ignore-errors
+            --no-abort-on-error
+            --retries 10
+            --fragment-retries 10
+            --extractor-retries 5
+            --retry-sleep 5
+            --download-archive archive.txt
+            --no-overwrites
+            --merge-output-format mp4
+            --embed-thumbnail
+            --add-metadata
+            --concurrent-fragments 2
+            --force-ipv4
+            --http-chunk-size 10M
+            -f "$FORMAT"
+            -o "$OUTPUT"
+          )
+
+          run_ytdlp() {
+            local label="$1"
+            shift
+
+            echo "::group::${label}"
+
+            if yt-dlp "${COMMON_ARGS[@]}" "$@"; then
+              echo "Fase completada: ${label}"
+            else
+              local status=$?
+              echo "::warning::La fase '${label}' terminó con código ${status}."
+              DOWNLOAD_ERRORS=1
+            fi
+
+            echo "::endgroup::"
+          }
+
+          # RSS / feeds públicos
+          if [[ -s feeds.txt ]]; then
+            run_ytdlp "RSS y feeds" \
               --sleep-requests 3 \
               --sleep-interval 5 \
               --max-sleep-interval 20 \
-              --ignore-errors \
-              --no-abort-on-error \
-              --retries 15 \
-              --fragment-retries 15 \
-              --extractor-retries 5 \
-              --retry-sleep 5 \
-              --download-archive archive.txt \
-              --no-overwrites \
-              --merge-output-format mp4 \
-              --embed-thumbnail \
-              --add-metadata \
-              --concurrent-fragments 3 \
-              --force-ipv4 \
-              --http-chunk-size 10M \
-              -f "bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-              -a feeds.txt || true
+              -a feeds.txt
           else
-            echo "feeds.txt vacío"
+            echo "feeds.txt no existe o está vacío; se omite."
           fi
 
-      # =========================================================
-      # 🧠 CANALES → PRIMER INTENTO SIN COOKIES
-      # =========================================================
-      - name: Download from channels (without cookies)
-        run: |
-          if [ -s canales.txt ]; then
-            yt-dlp \
-              --js-runtimes node \
-              --extractor-args "youtube:player_client=android,web_safari" \
+          # Canales sin cookies
+          if [[ -s canales.txt ]]; then
+            run_ytdlp "Canales sin cookies" \
               --sleep-requests 5 \
               --sleep-interval 10 \
               --max-sleep-interval 30 \
-              --ignore-errors \
-              --no-abort-on-error \
-              --retries 15 \
-              --fragment-retries 15 \
-              --extractor-retries 5 \
-              --retry-sleep 10 \
-              --concurrent-fragments 3 \
-              --download-archive archive.txt \
-              --no-overwrites \
-              --merge-output-format mp4 \
-              --embed-thumbnail \
-              --add-metadata \
-              --force-ipv4 \
-              --http-chunk-size 10M \
-              -f "bestvideo[ext=mp4][vcodec^=avc1][height<=2160]+bestaudio[ext=m4a]/bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-              -a canales.txt || true
+              -a canales.txt
           else
-            echo "canales.txt vacío"
+            echo "canales.txt no existe o está vacío; se omite."
           fi
 
-      # =========================================================
-      # 🔐 CANALES → SEGUNDO INTENTO CON COOKIES
-      # solo intentará lo que faltó gracias a archive.txt
-      # =========================================================
-      - name: Download from channels (with cookies fallback)
-        run: |
-          if [ -f cookies.txt ] && [ -s canales.txt ]; then
-            yt-dlp \
+          # Segundo intento de canales con cookies
+          if [[ -s canales.txt && -s cookies.txt ]]; then
+            run_ytdlp "Canales con cookies" \
               --cookies cookies.txt \
-              --js-runtimes node \
-              --extractor-args "youtube:player_client=android,web_safari" \
               --sleep-requests 8 \
               --sleep-interval 15 \
               --max-sleep-interval 40 \
-              --ignore-errors \
-              --no-abort-on-error \
-              --retries 20 \
-              --fragment-retries 20 \
+              --retries 15 \
+              --fragment-retries 15 \
               --extractor-retries 8 \
-              --retry-sleep 15 \
-              --concurrent-fragments 2 \
-              --download-archive archive.txt \
-              --no-overwrites \
-              --merge-output-format mp4 \
-              --embed-thumbnail \
-              --add-metadata \
-              --force-ipv4 \
-              --http-chunk-size 10M \
-              -f "bestvideo[ext=mp4][height<=2160]+bestaudio[ext=m4a]/best[ext=mp4]" \
-              -o "downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).200s.%(ext)s" \
-              -a canales.txt || true
+              --retry-sleep 10 \
+              -a canales.txt
           else
-            echo "Sin cookies o canales.txt vacío"
+            echo "Se omite la fase con cookies."
+          fi
+
+          echo "download_errors=${DOWNLOAD_ERRORS}" >> "$GITHUB_OUTPUT"
+
+          # No se falla todavía: primero hay que subir los
+          # vídeos que sí se descargaron y guardar su historial.
+
+      # ========================
+      # SUBIR VIDEOS
+      # ========================
+      - name: Upload videos to Google Drive
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REMOTE="gdrive:YouTubeArchive"
+
+          if find downloads -type f -print -quit | grep -q .; then
+            echo "Subiendo vídeos a Google Drive..."
+
+            rclone copy downloads/ "$REMOTE/" \
+              --transfers 3 \
+              --checkers 6 \
+              --tpslimit 4 \
+              --drive-chunk-size 64M \
+              --checksum \
+              --retries 5 \
+              --retries-sleep 10s \
+              --log-level INFO
+
+            echo "Transferencia completada."
+          else
+            echo "No hay vídeos nuevos para subir."
           fi
 
       # ========================
-      # ☁️ SUBIR VIDEOS
+      # ACTUALIZAR HISTORIAL
       # ========================
-      - name: Upload videos
+      - name: Backup and upload archive
+        shell: bash
+        env:
+          ARCHIVE_EXISTED: ${{ steps.archive.outputs.archive_existed }}
         run: |
-          rclone move downloads/ gdrive:YouTubeArchive \
-            --transfers 3 \
-            --checkers 6 \
-            --tpslimit 4 \
-            --drive-chunk-size 64M \
-            --progress || true
+          set -euo pipefail
+
+          REMOTE="gdrive:YouTubeArchive"
+
+          # Si no cambió el historial, no hace falta subirlo.
+          if cmp -s archive.before.txt archive.txt; then
+            echo "No hay cambios en archive.txt."
+            exit 0
+          fi
+
+          # Respaldar el historial anterior antes de sustituirlo.
+          if [[ "$ARCHIVE_EXISTED" == "true" ]]; then
+            BACKUP_NAME="archive-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+
+            rclone copyto \
+              archive.before.txt \
+              "$REMOTE/archive-backups/$BACKUP_NAME"
+
+            echo "Copia de seguridad creada: $BACKUP_NAME"
+          fi
+
+          # Solo llegamos aquí si la subida de vídeos terminó
+          # correctamente.
+          rclone copyto \
+            archive.txt \
+            "$REMOTE/archive.txt"
+
+          # Verificar que el historial remoto coincide.
+          rclone check archive.txt "$REMOTE/archive.txt"
+
+          echo "Historial actualizado y verificado."
 
       # ========================
-      # 💾 GUARDAR ARCHIVE
+      # INFORME FINAL
       # ========================
-      - name: Upload archive
+      - name: Report download status
+        if: always()
+        shell: bash
+        env:
+          DOWNLOAD_ERRORS: ${{ steps.download.outputs.download_errors }}
         run: |
-          rclone copy archive.txt gdrive:YouTubeArchive/ || true
+          set -euo pipefail
+
+          echo "=================================="
+          echo "YouTube Archive HYBRID"
+          echo "Run ID: ${GITHUB_RUN_ID}"
+          echo "=================================="
+
+          if [[ "${DOWNLOAD_ERRORS:-}" == "1" ]]; then
+            echo "::error::Hubo errores en una o más fases de descarga."
+            echo "Los vídeos descargados correctamente se procesaron por separado."
+            exit 1
+          fi
+
+          echo "Las fases de descarga terminaron sin errores reportados."
 
       # ========================
-      # 🧹 CLEANUP
+      # LIMPIEZA DE CREDENCIALES
       # ========================
-      - name: Cleanup
+      - name: Cleanup cookies
+        if: always()
+        shell: bash
         run: |
-          rm -rf downloads
           rm -f cookies.txt
