@@ -207,7 +207,7 @@ jobs:
 
           # Priorizar MP4/AVC1 y audio M4A.
           # Si no están disponibles, probar alternativas hasta 1080p.
-          FORMAT='bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080][ext=mp4]/b[height<=1080]'
+          FORMAT='bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]'
 
           OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).180s [%(id)s].%(ext)s'
 
