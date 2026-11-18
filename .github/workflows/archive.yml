@@ -6,21 +6,19 @@ on:
   schedule:
     - cron: "*/30 * * * *"
 
+# Evita dos ejecuciones simultáneas y conserva una cola de hasta 100 pendientes.
+# No combinar queue: max con cancel-in-progress: true.
 concurrency:
   group: youtube-archive
-  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
 
 jobs:
   download-and-upload:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 350
-
-    env:
-      RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
-      YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
 
     steps:
       # ========================
@@ -53,8 +51,12 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Se conserva yt-dlp actualizado porque YouTube cambia frecuentemente.
+          # No se fija una versión antigua que pueda dejar de extraer vídeos.
           python -m pip install --upgrade "yt-dlp[default]"
 
+          # FFmpeg realiza la fusión y el procesamiento de miniaturas/metadatos;
+          # rclone gestiona las transferencias a Google Drive.
           sudo apt-get update
           sudo apt-get install -y ffmpeg rclone
 
@@ -69,84 +71,92 @@ jobs:
       # ========================
       - name: Setup rclone
         shell: bash
+        env:
+          RCLONE_CONFIG_B64: ${{ secrets.RCLONE_CONFIG }}
         run: |
           set -euo pipefail
 
+          CONFIG_FILE="$RUNNER_TEMP/rclone.conf"
+
+          # La credencial solo está disponible en este paso.
           if [[ -z "${RCLONE_CONFIG_B64:-}" ]]; then
             echo "::error::Falta configurar el secreto RCLONE_CONFIG."
             exit 1
           fi
 
+          if ! printf '%s' "$RCLONE_CONFIG_B64" | base64 --decode > "$CONFIG_FILE"; then
+            echo "::error::No se pudo decodificar RCLONE_CONFIG."
+            rm -f "$CONFIG_FILE"
+            exit 1
+          fi
+
+          if [[ ! -s "$CONFIG_FILE" ]]; then
+            echo "::error::La configuración de rclone está vacía."
+            exit 1
+          fi
+
           mkdir -p "$HOME/.config/rclone"
           chmod 700 "$HOME/.config/rclone"
-
-          printf '%s' "$RCLONE_CONFIG_B64" \
-            | base64 --decode \
-            > "$HOME/.config/rclone/rclone.conf"
-
-          chmod 600 "$HOME/.config/rclone/rclone.conf"
+          install -m 600 "$CONFIG_FILE" "$HOME/.config/rclone/rclone.conf"
+          rm -f "$CONFIG_FILE"
 
           if ! rclone listremotes | grep -Fxq "gdrive:"; then
             echo "::error::No se encontró el remoto gdrive en la configuración de rclone."
             exit 1
           fi
 
-          echo "Configuración de rclone cargada."
+          echo "Configuración de rclone cargada correctamente."
 
       # ========================
       # COOKIES OBLIGATORIAS
       # ========================
       - name: Setup YouTube cookies
         shell: bash
+        env:
+          YOUTUBE_COOKIES_B64: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           set -euo pipefail
 
           COOKIE_FILE="$RUNNER_TEMP/youtube-cookies.txt"
 
-          # Validar que el secreto exista.
+          # No existe ningún modo alternativo: sin este secreto se detiene el job.
           if [[ -z "${YOUTUBE_COOKIES_B64:-}" ]]; then
             echo "::error::Falta configurar el secreto obligatorio YOUTUBE_COOKIES."
             exit 1
           fi
 
-          # Decodificar Base64.
-          if ! printf '%s' "$YOUTUBE_COOKIES_B64" \
-            | base64 --decode > "$COOKIE_FILE"; then
-            echo "::error::No se pudo decodificar YOUTUBE_COOKIES."
+          if ! printf '%s' "$YOUTUBE_COOKIES_B64" | base64 --decode > "$COOKIE_FILE"; then
+            echo "::error::No se pudo decodificar YOUTUBE_COOKIES en Base64."
             rm -f "$COOKIE_FILE"
             exit 1
           fi
 
           chmod 600 "$COOKIE_FILE"
 
-          # Validar que el archivo no esté vacío.
           if [[ ! -s "$COOKIE_FILE" ]]; then
             echo "::error::El archivo de cookies está vacío."
             exit 1
           fi
 
-          # Validar encabezado Netscape.
-          if ! head -n 1 "$COOKIE_FILE" \
-            | grep -Eq '^# (HTTP Cookie File|Netscape HTTP Cookie File)$'; then
+          # Comprueba el encabezado Netscape y que existan registros tabulados.
+          if ! head -n 1 "$COOKIE_FILE" | grep -Eq '^# (HTTP Cookie File|Netscape HTTP Cookie File)$'; then
             echo "::error::Las cookies no tienen un encabezado Netscape válido."
             exit 1
           fi
 
-          # Validar que existan registros de cookies.
           COOKIE_COUNT=$(awk -F '\t' '
-            !/^#/ && NF == 7 { count++ }
+            !/^#/ && NF == 7 && ($1 ~ /(^|\.)youtube\.com$/ || $1 ~ /(^|\.)google\.com$/ || $1 ~ /(^|\.)googlevideo\.com$/) { count++ }
             END { print count+0 }
           ' "$COOKIE_FILE")
 
           if [[ "$COOKIE_COUNT" -eq 0 ]]; then
-            echo "::error::El archivo Netscape no contiene registros de cookies válidos."
+            echo "::error::No se encontraron cookies de dominios de YouTube/Google en formato Netscape."
             exit 1
           fi
 
+          # La ruta se comparte con pasos posteriores sin exponer el contenido.
           echo "YOUTUBE_COOKIES_FILE=$COOKIE_FILE" >> "$GITHUB_ENV"
-
-          echo "Cookies de YouTube cargadas correctamente."
-          echo "Registros encontrados: $COOKIE_COUNT"
+          echo "Cookies Netscape cargadas. Registros relevantes: $COOKIE_COUNT"
 
       # ========================
       # PREPARAR HISTORIAL
@@ -167,40 +177,49 @@ jobs:
 
           if printf '%s\n' "$REMOTE_FILES" | grep -Fxq "archive.txt"; then
             echo "Restaurando historial remoto..."
-
             rclone copyto "$REMOTE/archive.txt" archive.txt
 
+            # Un historial remoto existente y vacío se considera sospechoso.
             if [[ ! -s archive.txt ]]; then
-              echo "::error::El historial remoto está vacío."
-              echo "::error::Se detiene el proceso para proteger el historial."
+              echo "::error::El historial remoto está vacío. Se detiene para protegerlo."
               exit 1
             fi
 
             echo "archive_existed=true" >> "$GITHUB_OUTPUT"
-
           else
             BACKUP_FILES="$(rclone lsf "$BACKUPS" --files-only)"
 
+            # Nunca inicializar un archivo nuevo si existen respaldos recuperables.
             if [[ -n "$BACKUP_FILES" ]]; then
               echo "::error::No existe archive.txt, pero hay copias de seguridad."
               echo "::error::Recupera una copia antes de continuar."
               exit 1
             fi
 
-            echo "::warning::No se encontró un historial previo."
-            echo "Se inicializará archive.txt por primera vez."
-
+            echo "::warning::No existe historial ni respaldo previo; se inicializa por primera vez."
             : > archive.txt
-
             echo "archive_existed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Conservar una copia local del historial original.
-          cp archive.txt archive.before.txt
+          # Formato esperado por yt-dlp: clave del extractor e ID, dos campos.
+          # Se rechazan líneas vacías, malformadas o duplicadas para no propagar corrupción.
+          if [[ -s archive.txt ]]; then
+            awk '
+              NF != 2 { printf "Registro malformado en línea %d.\n", NR > "/dev/stderr"; bad=1; next }
+              $1 !~ /^[[:alnum:]_-]+$/ || $2 !~ /^[[:alnum:]_-]+$/ { printf "Registro inválido en línea %d.\n", NR > "/dev/stderr"; bad=1; next }
+              seen[$1 FS $2]++ { printf "Registro duplicado en línea %d.\n", NR > "/dev/stderr"; bad=1 }
+              END { exit bad }
+            ' archive.txt || {
+              echo "::error::archive.txt no supera la validación estructural. No se continuará."
+              exit 1
+            }
+          fi
 
+          # Copia local inmutable para comparar y respaldar antes de actualizar Drive.
+          cp archive.txt archive.before.txt
           mkdir -p downloads
 
-          echo "Historial preparado correctamente."
+          echo "Historial restaurado y validado."
 
       # ========================
       # DESCARGAS AUTENTICADAS
@@ -213,33 +232,35 @@ jobs:
 
           DOWNLOAD_ERRORS=0
 
-          # Comprobar nuevamente las cookies antes de descargar.
-          if [[ -z "${YOUTUBE_COOKIES_FILE:-}" ]] \
-            || [[ ! -s "$YOUTUBE_COOKIES_FILE" ]]; then
-
-            echo "::error::No están disponibles las cookies de YouTube."
+          # Segunda comprobación defensiva: ninguna invocación de yt-dlp puede
+          # ejecutarse sin un archivo de cookies existente y no vacío.
+          if [[ -z "${YOUTUBE_COOKIES_FILE:-}" || ! -s "$YOUTUBE_COOKIES_FILE" ]]; then
+            echo "::error::Las cookies obligatorias no están disponibles."
             exit 1
           fi
 
-          # Priorizar MP4/AVC1 y audio M4A.
-          # Mantener alternativa MP4 hasta 1080p.
+          # Se conserva la preferencia original: MP4/AVC1 + M4A/MP4A hasta 1080p.
+          # La alternativa mantiene MP4 hasta 1080p cuando no existe la combinación preferida.
           FORMAT='bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]'
 
-          # Organización por canal y fecha.
-          OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title)s.%(ext)s'
+          # Formato solicitado: canal/año/mes/día/fecha - título [ID].ext.
+          # El ID evita colisiones entre vídeos con el mismo título y fecha.
+          OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(upload_date)s - %(title).180s [%(id)s].%(ext)s'
 
-          # Argumentos comunes para TODAS las descargas.
           COMMON_ARGS=(
             --cookies "$YOUTUBE_COOKIES_FILE"
             --js-runtimes node
-            --ignore-errors
-            --no-abort-on-error
+            # yt-dlp continúa con los siguientes vídeos por defecto ante errores individuales;
+            # no se usa --ignore-errors porque también ocultaría errores de postprocesamiento.
             --retries 10
             --fragment-retries 10
             --extractor-retries 5
-            --retry-sleep 5
+            --retry-sleep 'http:exp=1:20'
+            --retry-sleep 'fragment:exp=1:20'
+            --retry-sleep 'extractor:exp=1:20'
             --download-archive archive.txt
             --no-overwrites
+            --continue
             --merge-output-format mp4
             --embed-thumbnail
             --add-metadata
@@ -250,43 +271,54 @@ jobs:
             -o "$OUTPUT"
           )
 
-          # Una única ejecución sobre canales.txt.
-          # No hay descargas sin cookies ni reintentos duplicados
-          # entre fases de autenticación diferentes.
-
           if [[ -s canales.txt ]]; then
+            # Deduplica URLs exactamente iguales sin cambiar su orden.
+            # yt-dlp ignora líneas de comentario y vacías en el archivo de lote.
+            awk '
+              /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
+              !seen[$0]++ { print }
+            ' canales.txt > canales.unicos.txt
 
-            echo "::group::Descarga autenticada de canales"
-
-            if yt-dlp "${COMMON_ARGS[@]}" \
-              --sleep-requests 5 \
-              --sleep-interval 5 \
-              --max-sleep-interval 15 \
-              -a canales.txt; then
-
-              echo "Descarga de canales completada."
-
+            if [[ ! -s canales.unicos.txt ]]; then
+              echo "::warning::No hay URLs válidas en canales.txt."
             else
-              STATUS=$?
+              echo "::group::Descarga autenticada de canales"
 
-              DOWNLOAD_ERRORS=1
+              # Menor espera entre solicitudes de extracción que la configuración
+              # anterior (5 s), manteniendo una pausa aleatoria de 5–10 s por vídeo.
+              # No se ejecuta una segunda fase ni se reintentan canales sin cookies.
+              if yt-dlp "${COMMON_ARGS[@]}" \
+                --sleep-requests 1 \
+                --sleep-interval 5 \
+                --max-sleep-interval 10 \
+                -a canales.unicos.txt; then
+                echo "La ejecución de yt-dlp terminó sin errores reportados."
+              else
+                STATUS=$?
+                DOWNLOAD_ERRORS=1
+                echo "::warning::yt-dlp terminó con código $STATUS. Se conservarán y subirán los vídeos completados."
+              fi
 
-              echo "::warning::La descarga terminó con código $STATUS."
-              echo "Se continuará con la subida de los vídeos descargados correctamente."
+              echo "::endgroup::"
             fi
-
-            echo "::endgroup::"
-
           else
-            echo "::warning::canales.txt no existe o está vacío."
-            echo "No hay canales para procesar."
+            echo "::warning::canales.txt no existe o está vacío; no hay canales para procesar."
+          fi
+
+          # Valida el historial modificado por yt-dlp antes de permitir su publicación.
+          if [[ -s archive.txt ]]; then
+            awk '
+              NF != 2 { printf "Registro malformado en línea %d.\n", NR > "/dev/stderr"; bad=1; next }
+              $1 !~ /^[[:alnum:]_-]+$/ || $2 !~ /^[[:alnum:]_-]+$/ { printf "Registro inválido en línea %d.\n", NR > "/dev/stderr"; bad=1; next }
+              seen[$1 FS $2]++ { printf "Registro duplicado en línea %d.\n", NR > "/dev/stderr"; bad=1 }
+              END { exit bad }
+            ' archive.txt || {
+              echo "::error::El historial local quedó malformado después de yt-dlp."
+              exit 1
+            }
           fi
 
           echo "download_errors=$DOWNLOAD_ERRORS" >> "$GITHUB_OUTPUT"
-
-          echo "===== RESUMEN DE DESCARGAS ====="
-          echo "Modo: exclusivamente autenticado"
-          echo "Cookies: activas"
           echo "Errores de descarga: $DOWNLOAD_ERRORS"
 
       # ========================
@@ -300,9 +332,11 @@ jobs:
           REMOTE="gdrive:YouTubeArchive"
 
           if find downloads -type f -print -quit | grep -q .; then
-
             echo "Subiendo vídeos a Google Drive..."
 
+            # Se mantienen los valores conservadores aprobados:
+            # 3 transferencias, 6 comprobadores, 4 solicitudes/s y bloques de 64 MiB.
+            # --checksum evita transferencias redundantes cuando Drive ofrece hashes.
             rclone copy downloads/ "$REMOTE/" \
               --transfers 3 \
               --checkers 6 \
@@ -314,7 +348,6 @@ jobs:
               --log-level INFO
 
             echo "Transferencia completada."
-
           else
             echo "No hay vídeos nuevos para subir."
           fi
@@ -331,30 +364,28 @@ jobs:
 
           REMOTE="gdrive:YouTubeArchive"
 
-          # No actualizar si no hubo cambios.
+          # Si yt-dlp no registró vídeos nuevos, no se modifica el remoto.
           if cmp -s archive.before.txt archive.txt; then
             echo "No hay cambios en archive.txt."
             exit 0
           fi
 
-          # Respaldar el historial anterior antes de sustituirlo.
+          # Respalda el historial remoto anterior antes de sustituirlo.
           if [[ "$ARCHIVE_EXISTED" == "true" ]]; then
-
             BACKUP_NAME="archive-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
+            BACKUP_PATH="$REMOTE/archive-backups/$BACKUP_NAME"
 
-            rclone copyto \
-              archive.before.txt \
-              "$REMOTE/archive-backups/$BACKUP_NAME"
+            rclone copyto archive.before.txt "$BACKUP_PATH"
 
-            echo "Copia de seguridad creada: $BACKUP_NAME"
-
+            # Verifica que el respaldo remoto sea idéntico al archivo original.
+            rclone cat "$BACKUP_PATH" | cmp - archive.before.txt
+            echo "Copia de seguridad creada y verificada: $BACKUP_NAME"
           fi
 
-          # Actualizar el historial remoto.
           # Este paso solo se ejecuta si la subida de vídeos terminó correctamente.
           rclone copyto archive.txt "$REMOTE/archive.txt"
 
-          # Verificar que el contenido remoto sea idéntico.
+          # Verificación byte a byte del historial publicado.
           rclone cat "$REMOTE/archive.txt" | cmp - archive.txt
 
           echo "Historial actualizado y verificado."
@@ -377,7 +408,7 @@ jobs:
 
           if [[ "${DOWNLOAD_ERRORS:-}" == "1" ]]; then
             echo "::error::Hubo errores durante la descarga autenticada."
-            echo "Los vídeos descargados correctamente se procesaron por separado."
+            echo "Los archivos completados se subieron y el historial se actualizó solo si la transferencia y la verificación terminaron correctamente."
             exit 1
           fi
 
@@ -386,11 +417,15 @@ jobs:
       # ========================
       # LIMPIEZA DE CREDENCIALES
       # ========================
-      - name: Cleanup cookies
+      - name: Cleanup credentials
         if: always()
         shell: bash
         run: |
+          # Se ejecuta incluso si un paso anterior falla o se omite.
           rm -f "$RUNNER_TEMP/youtube-cookies.txt"
+          rm -f "$RUNNER_TEMP/rclone.conf"
+          rm -f "$HOME/.config/rclone/rclone.conf"
           rm -f cookies.txt
+          rm -f canales.unicos.txt
 
-          echo "Archivos locales de cookies eliminados."
+          echo "Archivos temporales de credenciales eliminados."
