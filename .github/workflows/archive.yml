@@ -209,6 +209,7 @@ jobs:
           # Si no están disponibles, probar alternativas hasta 1080p.
           FORMAT='bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]'
 
+          #OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).180s [%(id)s].%(ext)s' -opcion con [id]
           OOUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title)s.%(ext)s'
 
           COMMON_ARGS=(
