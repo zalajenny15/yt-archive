@@ -1,5 +1,5 @@
 
-name: YouTube Archive
+name: YouTube Archive HYBRID
 
 on:
   workflow_dispatch:
@@ -94,7 +94,7 @@ jobs:
           echo "Configuración de rclone cargada."
 
       # ========================
-      # COOKIES OBLIGATORIAS
+      # COOKIES OPCIONALES
       # ========================
       - name: Setup YouTube cookies
         shell: bash
@@ -103,50 +103,31 @@ jobs:
 
           COOKIE_FILE="$RUNNER_TEMP/youtube-cookies.txt"
 
-          # Validar que el secreto exista.
-          if [[ -z "${YOUTUBE_COOKIES_B64:-}" ]]; then
-            echo "::error::Falta configurar el secreto obligatorio YOUTUBE_COOKIES."
-            exit 1
+          if [[ -n "${YOUTUBE_COOKIES_B64:-}" ]]; then
+            if ! printf '%s' "$YOUTUBE_COOKIES_B64" \
+              | base64 --decode > "$COOKIE_FILE"; then
+              echo "::error::No se pudo decodificar YOUTUBE_COOKIES."
+              exit 1
+            fi
+
+            chmod 600 "$COOKIE_FILE"
+
+            if [[ ! -s "$COOKIE_FILE" ]]; then
+              echo "::error::El archivo de cookies está vacío."
+              exit 1
+            fi
+
+            if ! head -n 1 "$COOKIE_FILE" \
+              | grep -Eq '^# (HTTP Cookie File|Netscape HTTP Cookie File)$'; then
+              echo "::error::Las cookies no parecen estar en formato Netscape."
+              exit 1
+            fi
+
+            echo "YOUTUBE_COOKIES_FILE=$COOKIE_FILE" >> "$GITHUB_ENV"
+            echo "Cookies cargadas en una carpeta temporal."
+          else
+            echo "No se configuraron cookies. Se intentará descargar sin ellas."
           fi
-
-          # Decodificar Base64.
-          if ! printf '%s' "$YOUTUBE_COOKIES_B64" \
-            | base64 --decode > "$COOKIE_FILE"; then
-            echo "::error::No se pudo decodificar YOUTUBE_COOKIES."
-            rm -f "$COOKIE_FILE"
-            exit 1
-          fi
-
-          chmod 600 "$COOKIE_FILE"
-
-          # Validar que el archivo no esté vacío.
-          if [[ ! -s "$COOKIE_FILE" ]]; then
-            echo "::error::El archivo de cookies está vacío."
-            exit 1
-          fi
-
-          # Validar encabezado Netscape.
-          if ! head -n 1 "$COOKIE_FILE" \
-            | grep -Eq '^# (HTTP Cookie File|Netscape HTTP Cookie File)$'; then
-            echo "::error::Las cookies no tienen un encabezado Netscape válido."
-            exit 1
-          fi
-
-          # Validar que existan registros de cookies.
-          COOKIE_COUNT=$(awk -F '\t' '
-            !/^#/ && NF == 7 { count++ }
-            END { print count+0 }
-          ' "$COOKIE_FILE")
-
-          if [[ "$COOKIE_COUNT" -eq 0 ]]; then
-            echo "::error::El archivo Netscape no contiene registros de cookies válidos."
-            exit 1
-          fi
-
-          echo "YOUTUBE_COOKIES_FILE=$COOKIE_FILE" >> "$GITHUB_ENV"
-
-          echo "Cookies de YouTube cargadas correctamente."
-          echo "Registros encontrados: $COOKIE_COUNT"
 
       # ========================
       # PREPARAR HISTORIAL
@@ -177,7 +158,6 @@ jobs:
             fi
 
             echo "archive_existed=true" >> "$GITHUB_OUTPUT"
-
           else
             BACKUP_FILES="$(rclone lsf "$BACKUPS" --files-only)"
 
@@ -195,42 +175,44 @@ jobs:
             echo "archive_existed=false" >> "$GITHUB_OUTPUT"
           fi
 
-          # Conservar una copia local del historial original.
           cp archive.txt archive.before.txt
-
           mkdir -p downloads
 
           echo "Historial preparado correctamente."
 
       # ========================
-      # DESCARGAS AUTENTICADAS
+      # DESCARGAS
       # ========================
-      - name: Download new videos with cookies
+      - name: Download new videos
         id: download
         shell: bash
         run: |
           set -uo pipefail
 
-          DOWNLOAD_ERRORS=0
+          FEED_ERRORS=0
+          CHANNEL_ERRORS=0
+          COOKIE_ERRORS=0
 
-          # Comprobar nuevamente las cookies antes de descargar.
-          if [[ -z "${YOUTUBE_COOKIES_FILE:-}" ]] \
-            || [[ ! -s "$YOUTUBE_COOKIES_FILE" ]]; then
+          HAS_CHANNELS=0
+          HAS_COOKIES=0
 
-            echo "::error::No están disponibles las cookies de YouTube."
-            exit 1
+          if [[ -s canales.txt ]]; then
+            HAS_CHANNELS=1
+          fi
+
+          if [[ -n "${YOUTUBE_COOKIES_FILE:-}" \
+            && -s "${YOUTUBE_COOKIES_FILE:-/nonexistent}" ]]; then
+            HAS_COOKIES=1
           fi
 
           # Priorizar MP4/AVC1 y audio M4A.
-          # Mantener alternativa MP4 hasta 1080p.
+          # Si no están disponibles, probar alternativas hasta 1080p.
           FORMAT='bestvideo[ext=mp4][vcodec^=avc1][height<=1080]+bestaudio[ext=m4a][acodec^=mp4a]/best[ext=mp4][height<=1080]'
 
-          # Organización por canal y fecha.
-          OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title)s.%(ext)s'
+          #OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(title).180s [%(id)s].%(ext)s'
+          OUTPUT='downloads/%(uploader)s/%(upload_date>%Y/%m/%d)s/%(upload_date)s - %(title).180s [%(id)s].%(ext)s'
 
-          # Argumentos comunes para TODAS las descargas.
           COMMON_ARGS=(
-            --cookies "$YOUTUBE_COOKIES_FILE"
             --js-runtimes node
             --ignore-errors
             --no-abort-on-error
@@ -250,44 +232,112 @@ jobs:
             -o "$OUTPUT"
           )
 
-          # Una única ejecución sobre canales.txt.
-          # No hay descargas sin cookies ni reintentos duplicados
-          # entre fases de autenticación diferentes.
+          run_ytdlp() {
+            local label="$1"
+            local category="$2"
+            shift 2
 
-          if [[ -s canales.txt ]]; then
+            local status=0
 
-            echo "::group::Descarga autenticada de canales"
+            echo "::group::${label}"
 
-            if yt-dlp "${COMMON_ARGS[@]}" \
-              --sleep-requests 5 \
-              --sleep-interval 5 \
-              --max-sleep-interval 15 \
-              -a canales.txt; then
-
-              echo "Descarga de canales completada."
-
+            if yt-dlp "${COMMON_ARGS[@]}" "$@"; then
+              echo "Fase completada: ${label}"
             else
-              STATUS=$?
+              status=$?
+              echo "::warning::La fase '${label}' terminó con código ${status}."
 
-              DOWNLOAD_ERRORS=1
-
-              echo "::warning::La descarga terminó con código $STATUS."
-              echo "Se continuará con la subida de los vídeos descargados correctamente."
+              case "$category" in
+                feed)
+                  FEED_ERRORS=1
+                  ;;
+                channel)
+                  CHANNEL_ERRORS=1
+                  ;;
+                cookie)
+                  COOKIE_ERRORS=1
+                  ;;
+              esac
             fi
 
             echo "::endgroup::"
+            return 0
+          }
 
+          # ------------------------
+          # RSS / FEEDS PUBLICOS
+          # ------------------------
+          if [[ -s feeds.txt ]]; then
+            run_ytdlp "RSS y feeds" feed \
+              --sleep-requests 3 \
+              --sleep-interval 5 \
+              --max-sleep-interval 20 \
+              -a feeds.txt
           else
-            echo "::warning::canales.txt no existe o está vacío."
-            echo "No hay canales para procesar."
+            echo "feeds.txt no existe o está vacío; se omite."
+          fi
+
+          # ------------------------
+          # CANALES SIN COOKIES
+          # ------------------------
+          if [[ "$HAS_CHANNELS" == "1" ]]; then
+            if [[ "$HAS_COOKIES" == "1" ]]; then
+              # Este intento es preliminar: los fallos se
+              # vuelven a intentar en la fase autenticada.
+              run_ytdlp "Canales sin cookies (primer intento)" channel \
+                --sleep-requests 5 \
+                --sleep-interval 10 \
+                --max-sleep-interval 30 \
+                -a canales.txt
+            else
+              run_ytdlp "Canales sin cookies" cookie \
+                --sleep-requests 5 \
+                --sleep-interval 10 \
+                --max-sleep-interval 30 \
+                -a canales.txt
+            fi
+          else
+            echo "canales.txt no existe o está vacío; se omite."
+          fi
+
+          # ------------------------
+          # CANALES CON COOKIES
+          # ------------------------
+          if [[ "$HAS_CHANNELS" == "1" && "$HAS_COOKIES" == "1" ]]; then
+            run_ytdlp "Canales con cookies (reintento)" cookie \
+              --cookies "$YOUTUBE_COOKIES_FILE" \
+              --sleep-requests 8 \
+              --sleep-interval 15 \
+              --max-sleep-interval 40 \
+              --retries 15 \
+              --fragment-retries 15 \
+              --extractor-retries 8 \
+              --retry-sleep 10 \
+              -a canales.txt
+          else
+            echo "Se omite la fase con cookies."
+          fi
+
+          # Si no hay cookies, los errores de la fase de
+          # canales sin cookies sí deben reflejarse en el resultado.
+          DOWNLOAD_ERRORS=0
+
+          if [[ "$FEED_ERRORS" == "1" \
+            || "$CHANNEL_ERRORS" == "1" \
+            || "$COOKIE_ERRORS" == "1" ]]; then
+            DOWNLOAD_ERRORS=1
           fi
 
           echo "download_errors=$DOWNLOAD_ERRORS" >> "$GITHUB_OUTPUT"
 
           echo "===== RESUMEN DE DESCARGAS ====="
-          echo "Modo: exclusivamente autenticado"
-          echo "Cookies: activas"
-          echo "Errores de descarga: $DOWNLOAD_ERRORS"
+          echo "Errores en feeds: $FEED_ERRORS"
+          echo "Errores en canales sin cookies: $CHANNEL_ERRORS"
+          echo "Errores en fase con cookies o fase sin autenticación: $COOKIE_ERRORS"
+          echo "Errores finales: $DOWNLOAD_ERRORS"
+
+          # No se detiene el workflow aquí: primero se subirán
+          # los vídeos descargados y se actualizará el historial.
 
       # ========================
       # SUBIR VIDEOS
@@ -300,7 +350,6 @@ jobs:
           REMOTE="gdrive:YouTubeArchive"
 
           if find downloads -type f -print -quit | grep -q .; then
-
             echo "Subiendo vídeos a Google Drive..."
 
             rclone copy downloads/ "$REMOTE/" \
@@ -314,7 +363,6 @@ jobs:
               --log-level INFO
 
             echo "Transferencia completada."
-
           else
             echo "No hay vídeos nuevos para subir."
           fi
@@ -331,7 +379,6 @@ jobs:
 
           REMOTE="gdrive:YouTubeArchive"
 
-          # No actualizar si no hubo cambios.
           if cmp -s archive.before.txt archive.txt; then
             echo "No hay cambios en archive.txt."
             exit 0
@@ -339,7 +386,6 @@ jobs:
 
           # Respaldar el historial anterior antes de sustituirlo.
           if [[ "$ARCHIVE_EXISTED" == "true" ]]; then
-
             BACKUP_NAME="archive-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.txt"
 
             rclone copyto \
@@ -347,11 +393,10 @@ jobs:
               "$REMOTE/archive-backups/$BACKUP_NAME"
 
             echo "Copia de seguridad creada: $BACKUP_NAME"
-
           fi
 
-          # Actualizar el historial remoto.
-          # Este paso solo se ejecuta si la subida de vídeos terminó correctamente.
+          # Este paso solo se ejecuta si la subida de vídeos
+          # terminó correctamente.
           rclone copyto archive.txt "$REMOTE/archive.txt"
 
           # Verificar que el contenido remoto sea idéntico.
@@ -371,17 +416,17 @@ jobs:
           set -euo pipefail
 
           echo "=================================="
-          echo "YouTube Archive"
+          echo "YouTube Archive HYBRID"
           echo "Run ID: ${GITHUB_RUN_ID}"
           echo "=================================="
 
           if [[ "${DOWNLOAD_ERRORS:-}" == "1" ]]; then
-            echo "::error::Hubo errores durante la descarga autenticada."
+            echo "::error::Hubo errores en una o más fases de descarga."
             echo "Los vídeos descargados correctamente se procesaron por separado."
             exit 1
           fi
 
-          echo "No se reportaron errores de descarga."
+          echo "No se reportaron errores en las fases de descarga."
 
       # ========================
       # LIMPIEZA DE CREDENCIALES
@@ -392,5 +437,4 @@ jobs:
         run: |
           rm -f "$RUNNER_TEMP/youtube-cookies.txt"
           rm -f cookies.txt
-
           echo "Archivos locales de cookies eliminados."
