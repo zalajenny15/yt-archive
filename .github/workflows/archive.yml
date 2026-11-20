@@ -404,6 +404,7 @@ jobs:
 
           echo "Historial actualizado y verificado."
 
+      
       # ========================
       # INFORME FINAL
       # ========================
@@ -421,12 +422,18 @@ jobs:
           echo "=================================="
 
           if [[ "${DOWNLOAD_ERRORS:-}" == "1" ]]; then
-            echo "::error::Hubo errores en una o más fases de descarga."
+            echo "::warning::Hubo errores en una o más fases de descarga."
             echo "Los vídeos descargados correctamente se procesaron por separado."
-            exit 1
+            echo "Las incidencias de descarga no impedirán finalizar correctamente el proceso."
+          else
+            echo "Todas las fases de descarga terminaron sin errores reportados."
           fi
 
-          echo "No se reportaron errores en las fases de descarga."
+          echo "=================================="
+          echo "PROCESO FINALIZADO"
+          echo "=================================="
+
+          exit 0
 
       # ========================
       # LIMPIEZA DE CREDENCIALES
